@@ -1,0 +1,8 @@
+{
+  "sourceKind": "oem",
+  "description": "最小 OEM 应用样板，用于验证品牌投影、更新投影和诊断能力。",
+  "categories": ["OEM", "样板"],
+  "latestVersion": "0.1.0",
+  "updatedAt": "2026-05-23T00:00:00.000Z",
+  "releaseNotes": ["提供无业务逻辑的宿主契约样板。"]
+}

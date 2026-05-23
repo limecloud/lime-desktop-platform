@@ -1,0 +1,36 @@
+{
+  "sourceKind": "cloud",
+  "description": "GEO 种草内容生产工作台，覆盖日记、选题、素材、草稿、Schema 和发布 readiness。",
+  "categories": ["GEO", "内容生产", "Agent App"],
+  "latestVersion": "0.1.0",
+  "updatedAt": "2026-05-23T00:00:00.000Z",
+  "releaseNotes": ["接入 Lime 应用中心启动链路。", "投影 STREAM 五维、Schema JSON-LD 和发布 readiness。"],
+  "devRuntime": {
+    "projectRootEnv": "LIME_ZHONGCAO_ROOT",
+    "relativeProjectRoot": "../zhongcao",
+    "mainEntry": "out/main/index.js",
+    "remoteDebuggingPortEnv": "LIME_ZHONGCAO_REMOTE_DEBUGGING_PORT"
+  },
+  "frameworkHighlights": [
+    {
+      "label": "STREAM 五维",
+      "state": "dev-projection",
+      "detail": "结构、时效、引用、共鸣、一致性预检由业务 App 本地规则承接。"
+    },
+    {
+      "label": "Schema JSON-LD",
+      "state": "dev-projection",
+      "detail": "第一阶段生成 Article / FAQPage 草案，发布前需人工确认。"
+    },
+    {
+      "label": "模型生成",
+      "state": "needs-setup",
+      "detail": "真实生成必须通过 lime.modelSettings；未配置时不得伪成功。"
+    },
+    {
+      "label": "发布计划",
+      "state": "blocked",
+      "detail": "第一阶段只做 readiness 和计划，不触发外部渠道发布。"
+    }
+  ]
+}

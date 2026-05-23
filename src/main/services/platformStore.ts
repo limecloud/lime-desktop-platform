@@ -85,6 +85,14 @@ export class PlatformStore {
     writeJson(join(this.paths.workspaceStateDir, 'runtime-snapshots.json'), snapshots);
   }
 
+  removeRuntimeSnapshotsForApp(appId: string): void {
+    const snapshots = this.readRuntimeSnapshots();
+    const nextSnapshots = Object.fromEntries(
+      Object.entries(snapshots).filter(([key, snapshot]) => snapshot.appId !== appId && !key.startsWith(`${appId}:`)),
+    );
+    this.writeRuntimeSnapshots(nextSnapshots);
+  }
+
   readRuntimeEvents(): RuntimeEvent[] {
     return readJson<RuntimeEvent[]>(join(this.paths.workspaceStateDir, 'runtime-events.json'), []);
   }

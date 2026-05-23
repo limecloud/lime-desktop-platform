@@ -33,6 +33,7 @@ repo: lime-desktop-platform
 | [`user-story-flow-map.md`](./user-story-flow-map.md) | 角色、路径、页面和主动作映射。 |
 | [`completion-audit.md`](./completion-audit.md) | v1 完成门槛、风险和开发验收清单。 |
 | [`zhongcao-integration.md`](./zhongcao-integration.md) | zhongcao 接入平台的能力边界、启动顺序和 manifest 样板。 |
+| [`zhongcao-handoff-prompt.md`](./zhongcao-handoff-prompt.md) | 交给 zhongcao 开发进程的启动提示词和接入验收。 |
 
 ## 4. v1 开发顺序
 
@@ -50,3 +51,4 @@ repo: lime-desktop-platform
 - 所有状态都要可追溯，`blocked` 不能伪造成成功。
 - 工作区级事实和用户级配置要分开存储。
 - Electron 和 Tauri 必须共享同一套外部契约。
+- runtime-backed 只是第一阶段落地形态；业务 App 必须通过 Host Snapshot、runtime bridge 和平台事件消费宿主能力。

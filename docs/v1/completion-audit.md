@@ -47,9 +47,9 @@ repo: lime-desktop-platform
 
 ### 2.4 复用门槛
 
-- [ ] `content-studio` 可作为首个样板接入
-- [ ] `zhongcao` 可作为第二个样板接入
-- [ ] 业务 App 不需要重复实现登录、模型和计费
+- [x] `content-studio` 可作为首个样板接入
+- [x] `zhongcao` 可作为第二个样板接入
+- [x] 业务 App 不需要重复实现登录、模型和计费
 - [ ] Tauri 适配可以共用同一协议
 
 ## 3. 必须阻断的风险
@@ -74,42 +74,44 @@ repo: lime-desktop-platform
 
 ### 5.1 文档门槛
 
-- [ ] PRD 完整
-- [ ] 平台能力边界完整
-- [ ] 宿主契约完整
-- [ ] 架构图完整
-- [ ] 工作流模型完整
-- [ ] UI 蓝图完整
-- [ ] 实施计划完整
-- [ ] 用户故事流程完整
-- [ ] 完成度审计完整
-- [ ] 方法论和运行手册齐全
+- [x] PRD 完整
+- [x] 平台能力边界完整
+- [x] 宿主契约完整
+- [x] 架构图完整
+- [x] 工作流模型完整
+- [x] UI 蓝图完整
+- [x] 实施计划完整
+- [x] 用户故事流程完整
+- [x] 完成度审计完整
+- [x] 方法论和运行手册齐全
 
 ### 5.2 协议门槛
 
-- [ ] manifest 结构稳定
-- [ ] projection 输入输出稳定
-- [ ] readiness 状态稳定
-- [ ] Host Bridge v1 稳定
-- [ ] IPC 公共面稳定
-- [ ] 本地存储分层稳定
+- [x] manifest 结构稳定
+- [x] projection 输入输出稳定
+- [x] readiness 状态稳定
+- [x] Host Bridge v1 稳定
+- [x] IPC 公共面稳定
+- [x] 本地存储分层稳定
+- [x] Runtime Bridge v1 开发态稳定
 
 ### 5.3 平台门槛
 
-- [ ] 应用中心可用
-- [ ] 模型设置可用
-- [ ] OAuth / 会话可用
-- [ ] OEM / 品牌可用
-- [ ] 充值 / 订阅可用
+- [x] 应用中心可用
+- [x] 模型设置可用
+- [x] OAuth / 会话开发态投影可用
+- [x] OEM / 品牌开发态投影可用
+- [x] 充值 / 订阅开发态投影可用
 - [ ] 更新 / 分发可用
-- [ ] 运行页可用
-- [ ] 开发者页可用
+- [x] 运行页可用
+- [x] 开发者页可用
+- [x] 卸载生命周期可用
 
 ### 5.4 复用门槛
 
-- [ ] `content-studio` 可作为首个样板接入
-- [ ] `zhongcao` 可作为第二个样板接入
-- [ ] 业务 App 不需要重复实现登录、模型和计费
+- [x] `content-studio` 可作为首个样板接入
+- [x] `zhongcao` 可作为第二个样板接入
+- [x] 业务 App 不需要重复实现登录、模型和计费
 - [ ] Tauri 适配可以共用同一协议
 
 ## 6. 必须阻断的风险
@@ -138,8 +140,8 @@ repo: lime-desktop-platform
 已落地：
 
 - `src/shared/types.ts` 提供 manifest、projection、readiness、Host Bridge、IPC、模型设置、OAuth、OEM、billing、diagnostics 契约。
-- `src/main/services/seedCatalog.ts` 提供 `content-studio`、`zhongcao` 和 OEM 样板应用目录。
-- `src/main/services/platformService.ts` 提供安装、启用、禁用、readiness、snapshot、capability invoke 和设置同步的最小实现。
+- `src/main/services/seedCatalog.ts` 只负责从 `samples/*` 通用加载开发态应用中心 fixture，不在平台核心 hard code 具体业务 App；`samples/zhongcao` 提供 GEO / STREAM / Schema / 发布 readiness 样板元数据。
+- `src/main/services/platformService.ts` 提供安装、启用、禁用、卸载保留数据、readiness、snapshot、capability invoke、runtime-backed 启动和设置同步的最小实现。
 - `src/main/services/platformStore.ts` 将工作区级事实写入 `.lime-desktop/`，将用户级配置写入 Electron `userData/state`。
 - `src/preload/index.ts` 暴露 `window.limeDesktop`，renderer 不直接访问主进程实现。
 - `src/renderer/src/App.tsx` 已有应用中心、设置中心、运行页和开发者诊断页。
@@ -147,7 +149,7 @@ repo: lime-desktop-platform
 未完成：
 
 - 真实云端目录、OAuth、billing、更新下载仍是本地投影和开发态模拟。
-- `content-studio`、`zhongcao` 还未作为真实 bundle 接入运行。
+- `zhongcao` 当前以本地 runtime-backed Electron App 接入，Host Snapshot 通过非敏感 runtime projection 注入，平台 capability 通过 127.0.0.1 runtime bridge 裁决；完整嵌入式 Host Bridge/WebView 仍未完成。
 - Tauri adapter 还未创建。
 
 已验证：
@@ -155,3 +157,5 @@ repo: lime-desktop-platform
 - `npm install` 完成，生成 `package-lock.json`。
 - `npm run verify:local` 通过，覆盖 `typecheck`、`build` 和 `smoke:electron`。
 - Electron smoke 覆盖平台 bootstrap、`content-studio` 安装、登录投影、模型设置、billing 刷新、入口启动、host snapshot 和 capability invoke。
+- Electron smoke 作为专项 fixture 验收覆盖 `lime.zhongcao` 安装、readiness 补齐、应用中心启动、业务窗口 preload 注入、runtime projection、runtime bridge capability 调用、STREAM 五维显示、平台变化事件和卸载生命周期；平台核心只提供通用 capability 裁决，不写 GEO 草稿。
+- `npm run governance:hardcode-scan` 用于阻止 `zhongcao`、GEO 或其他业务样板硬编码回流到平台核心目录。

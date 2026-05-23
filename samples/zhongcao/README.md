@@ -10,10 +10,13 @@
 
 建议同步实现：
 
-- `appId: zhongcao`
+- `appId: lime.zhongcao`
 - `displayName: 种草日记`
 - `installMode: runtime_backed`
 - 必需 capability: `lime.cloudSession`、`lime.modelSettings`、`lime.branding`、`lime.billing`、`lime.appUpdates`、`lime.diagnostics`
+- 默认入口: `diary-workbench`
+- 业务 App 通过 `window.limeDesktop.platform.onChanged(...)` 订阅平台会话、模型、billing、更新和卸载状态变化。
+- 卸载由平台执行，业务 App 不维护独立安装表；第一阶段默认保留业务数据。
 
 业务页面建议只保留：
 
@@ -22,4 +25,3 @@
 - 素材库
 - 发布计划
 - 业务诊断
-

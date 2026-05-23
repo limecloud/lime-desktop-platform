@@ -1,7 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { app } from 'electron';
 import { seedCatalog } from './seedCatalog';
 import { PlatformStore } from './platformStore';
+import { RuntimeBridgeServer } from './runtimeBridgeServer';
 import type {
   BillingSnapshot,
   CapabilityInvokeInput,
@@ -24,6 +29,8 @@ import type {
   ReadinessReason,
   ReadinessResult,
   RuntimeEvent,
+  UninstallAppInput,
+  UninstallAppResult,
   UpdateActionResult,
   UpdateState,
 } from '../../shared/types';
@@ -59,6 +66,8 @@ function entryLabel(entry: DesktopAppManifest['entries'][number]): string {
 export class PlatformService {
   private readonly store = new PlatformStore();
   private readonly catalog = seedCatalog;
+  private readonly childProcesses = new Map<string, ChildProcess>();
+  private readonly runtimeBridge = new RuntimeBridgeServer((input) => this.invokeCapability(input));
 
   getBootstrap(): PlatformBootstrap {
     const projections = this.listProjections();
@@ -166,7 +175,53 @@ export class PlatformService {
     return this.persistProjection(appId);
   }
 
-  launchEntry(input: LaunchEntryInput): LaunchEntryResult {
+  uninstallApp(input: UninstallAppInput): UninstallAppResult {
+    const installedApps = this.listInstalled();
+    const installed = installedApps.find((record) => record.appId === input.appId);
+    const catalogApp = this.requireCatalogApp(input.appId);
+
+    if (!installed) {
+      const event = this.appendEvent({
+        level: 'warning',
+        appId: input.appId,
+        message: `${catalogApp.manifest.displayName} 未安装，无需卸载。`,
+      });
+
+      return {
+        ok: false,
+        appId: input.appId,
+        status: 'blocked',
+        message: '应用尚未安装。',
+        projectedApp: this.getProjection(input.appId),
+        runtimeEvents: [event, ...this.store.readRuntimeEvents().filter((item) => item.id !== event.id).slice(-19)],
+      };
+    }
+
+    this.stopRuntimeApp(input.appId);
+    this.store.writeInstalledApps(installedApps.filter((record) => record.appId !== input.appId));
+    this.store.removeRuntimeSnapshotsForApp(input.appId);
+    const projection = this.persistProjection(input.appId);
+    const event = this.appendEvent({
+      level: 'warning',
+      appId: input.appId,
+      message: `${catalogApp.manifest.displayName} 已从当前工作区卸载。`,
+      payload: {
+        keepData: input.keepData ?? true,
+        removedVersion: installed.version,
+      },
+    });
+
+    return {
+      ok: true,
+      appId: input.appId,
+      status: 'removed',
+      message: input.keepData === false ? '应用已卸载；业务数据清理由后续安全删除流程承接。' : '应用已卸载，业务数据保留。',
+      projectedApp: projection,
+      runtimeEvents: [event, ...this.store.readRuntimeEvents().filter((item) => item.id !== event.id).slice(-19)],
+    };
+  }
+
+  async launchEntry(input: LaunchEntryInput): Promise<LaunchEntryResult> {
     const projection = this.getProjection(input.appId);
     const readiness = projection.readiness;
     const entry = projection.entryCards.find((item) => item.key === input.entryKey);
@@ -197,8 +252,6 @@ export class PlatformService {
     const snapshots = this.store.readRuntimeSnapshots();
     snapshots[this.snapshotKey(input)] = snapshot;
     this.store.writeRuntimeSnapshots(snapshots);
-    this.markLaunched(input.appId);
-
     const bridgeMessage: HostBridgeMessage<HostSnapshot> = {
       protocol: 'lime.agentApp.bridge',
       version: 1,
@@ -209,12 +262,48 @@ export class PlatformService {
       payload: snapshot,
     };
 
+    const runtimeStart = await this.launchRuntimeBackedApp(input, snapshot);
+    if (!runtimeStart.ok) {
+      const blockedReadiness: ReadinessResult = {
+        state: runtimeStart.fixable ? 'needs-setup' : 'blocked',
+        reasons: [
+          {
+            code: runtimeStart.code,
+            message: runtimeStart.message,
+            fixable: runtimeStart.fixable,
+          },
+        ],
+        setupActions: runtimeStart.fixable ? ['先构建 runtime-backed App，并检查 catalog devRuntime 配置。'] : [],
+      };
+      const event = this.appendEvent({
+        level: runtimeStart.fixable ? 'warning' : 'error',
+        appId: input.appId,
+        entryKey: input.entryKey,
+        message: `runtime-backed 启动未完成：${runtimeStart.message}`,
+        payload: blockedReadiness,
+      });
+
+      return {
+        launched: false,
+        appId: input.appId,
+        entryKey: input.entryKey,
+        readiness: blockedReadiness,
+        snapshot,
+        bridgeMessage,
+        runtimeEvents: [event, ...this.store.readRuntimeEvents().filter((item) => item.id !== event.id).slice(-19)],
+      };
+    }
+
+    this.markLaunched(input.appId);
     const event = this.appendEvent({
       level: 'info',
       appId: input.appId,
       entryKey: input.entryKey,
-      message: 'Host Snapshot 已生成，入口进入运行态。',
-      payload: bridgeMessage,
+      message: runtimeStart.message,
+      payload: {
+        bridgeMessage,
+        runtime: runtimeStart.payload,
+      },
     });
 
     return {
@@ -230,7 +319,7 @@ export class PlatformService {
 
   invokeCapability(input: CapabilityInvokeInput): CapabilityInvokeResult {
     const requestId = randomUUID();
-    const output = this.resolveCapabilityOutput(input.capability);
+    const output = this.resolveCapabilityOutput(input);
     const ok = output !== undefined;
     const event = this.appendEvent({
       level: ok ? 'info' : 'error',
@@ -262,6 +351,17 @@ export class PlatformService {
 
   getRuntimeSnapshot(input: LaunchEntryInput): HostSnapshot | undefined {
     return this.store.readRuntimeSnapshots()[this.snapshotKey(input)];
+  }
+
+  shutdownRuntimeBackedApps(): void {
+    for (const [appId, childProcess] of this.childProcesses.entries()) {
+      if (childProcess.exitCode === null && childProcess.signalCode === null) {
+        childProcess.kill();
+        this.appendEvent({ level: 'info', appId, message: '测试运行结束，已关闭 runtime-backed 子进程。' });
+      }
+      this.childProcesses.delete(appId);
+    }
+    this.runtimeBridge.close();
   }
 
   getModelSettings(): ModelSettings {
@@ -605,7 +705,122 @@ export class PlatformService {
     };
   }
 
-  private resolveCapabilityOutput(capability: PlatformCapability): unknown {
+  private async launchRuntimeBackedApp(
+    input: LaunchEntryInput,
+    snapshot: HostSnapshot,
+  ): Promise<{ ok: true; message: string; payload?: unknown } | { ok: false; code: string; message: string; fixable: boolean }> {
+    const runtimeApp = this.resolveRuntimeBackedApp(input.appId);
+    if (!runtimeApp) {
+      return {
+        ok: true,
+        message: 'Host Snapshot 已生成，入口进入运行态。',
+        payload: { mode: 'in-lime-projection' },
+      };
+    }
+
+    if (!existsSync(runtimeApp.mainEntry)) {
+      return {
+        ok: false,
+        code: 'runtime-build-missing',
+        message: `未找到业务 App 构建产物：${runtimeApp.mainEntry}`,
+        fixable: true,
+      };
+    }
+
+    const existing = this.childProcesses.get(input.appId);
+    if (existing && existing.exitCode === null && existing.signalCode === null) {
+      return {
+        ok: true,
+        message: 'runtime-backed App 已在运行，Host Snapshot 已刷新。',
+        payload: { mode: 'external-electron', pid: existing.pid, projectRoot: runtimeApp.projectRoot },
+      };
+    }
+
+    const bridgeDescriptor = await this.runtimeBridge.createDescriptor({
+      appId: input.appId,
+      entryKey: input.entryKey,
+      snapshot,
+    });
+    const childArgs = [runtimeApp.projectRoot];
+    const remoteDebuggingPortEnv = runtimeApp.remoteDebuggingPortEnv;
+    if (remoteDebuggingPortEnv && process.env[remoteDebuggingPortEnv]) {
+      childArgs.push(`--remote-debugging-port=${process.env[remoteDebuggingPortEnv]}`);
+    }
+    if (process.env.CI === 'true' && process.platform === 'linux') {
+      childArgs.push('--no-sandbox');
+    }
+
+    const detached = process.env.LIME_DESKTOP_SMOKE !== '1';
+    const childProcess = spawn(process.execPath, childArgs, {
+      cwd: runtimeApp.projectRoot,
+      detached,
+      stdio: 'ignore',
+      env: {
+        ...process.env,
+        LIME_HOST_SNAPSHOT: JSON.stringify(snapshot),
+        LIME_RUNTIME_BRIDGE: JSON.stringify(bridgeDescriptor),
+      },
+    });
+    if (detached) {
+      childProcess.unref();
+    }
+    this.childProcesses.set(input.appId, childProcess);
+    childProcess.once('exit', () => {
+      this.childProcesses.delete(input.appId);
+    });
+
+    return {
+      ok: true,
+      message: 'runtime-backed App 已由 Lime 应用中心启动。',
+      payload: {
+        mode: 'external-electron',
+        pid: childProcess.pid,
+        projectRoot: runtimeApp.projectRoot,
+        runtimeBridge: {
+          endpoint: bridgeDescriptor.endpoint,
+          expiresAt: bridgeDescriptor.expiresAt,
+        },
+      },
+    };
+  }
+
+  private resolveRuntimeBackedApp(appId: string): { projectRoot: string; mainEntry: string; remoteDebuggingPortEnv?: string } | undefined {
+    const catalogApp = this.catalog.find((item) => item.manifest.appId === appId);
+    const devRuntime = catalogApp?.devRuntime;
+    if (!catalogApp || catalogApp.manifest.installMode !== 'runtime_backed' || !devRuntime) {
+      return undefined;
+    }
+
+    const projectRoot =
+      (devRuntime.projectRootEnv ? process.env[devRuntime.projectRootEnv] : undefined) ??
+      (devRuntime.relativeProjectRoot ? resolve(app.getAppPath(), devRuntime.relativeProjectRoot) : undefined);
+
+    if (!projectRoot) {
+      return undefined;
+    }
+
+    return {
+      projectRoot,
+      mainEntry: join(projectRoot, devRuntime.mainEntry ?? 'out/main/index.js'),
+      remoteDebuggingPortEnv: devRuntime.remoteDebuggingPortEnv,
+    };
+  }
+
+  private stopRuntimeApp(appId: string): void {
+    const childProcess = this.childProcesses.get(appId);
+    if (!childProcess) {
+      return;
+    }
+
+    if (childProcess.exitCode === null && childProcess.signalCode === null) {
+      childProcess.kill();
+    }
+    this.childProcesses.delete(appId);
+    this.runtimeBridge.revokeApp(appId);
+  }
+
+  private resolveCapabilityOutput(input: CapabilityInvokeInput): unknown {
+    const capability = input.capability;
     if (capability === 'lime.cloudSession') {
       return this.getAuthSession();
     }

@@ -130,6 +130,16 @@ export interface HostSnapshot {
   oemState?: OEMState;
 }
 
+export interface RuntimeBridgeDescriptor {
+  protocol: 'lime.runtimeBridge';
+  version: 1;
+  endpoint: string;
+  token: string;
+  appId: string;
+  entryKey: string;
+  expiresAt: string;
+}
+
 export type HostBridgeMessageType =
   | 'ready'
   | 'snapshot'
@@ -158,6 +168,17 @@ export interface CatalogApp {
   latestVersion: string;
   updatedAt: string;
   releaseNotes: string[];
+  frameworkHighlights?: Array<{
+    label: string;
+    state: ReadinessState | 'dev-projection';
+    detail: string;
+  }>;
+  devRuntime?: {
+    projectRootEnv?: string;
+    relativeProjectRoot?: string;
+    mainEntry?: string;
+    remoteDebuggingPortEnv?: string;
+  };
 }
 
 export type ModelProtocol = 'openai-compatible' | 'anthropic-compatible' | 'gemini-native' | 'local';
@@ -285,6 +306,27 @@ export interface PlatformBootstrap {
   runtimeEvents: RuntimeEvent[];
 }
 
+export type PlatformChangeReason =
+  | 'app-installed'
+  | 'app-updated'
+  | 'app-enabled'
+  | 'app-disabled'
+  | 'app-uninstalled'
+  | 'app-launched'
+  | 'settings-updated'
+  | 'auth-updated'
+  | 'billing-updated'
+  | 'updates-checked'
+  | 'runtime-event';
+
+export interface PlatformChangeEvent {
+  reason: PlatformChangeReason;
+  appId?: string;
+  entryKey?: string;
+  timestamp: string;
+  bootstrap: PlatformBootstrap;
+}
+
 export interface LaunchEntryInput {
   appId: string;
   entryKey: string;
@@ -297,6 +339,20 @@ export interface LaunchEntryResult {
   readiness: ReadinessResult;
   snapshot?: HostSnapshot;
   bridgeMessage?: HostBridgeMessage<HostSnapshot>;
+  runtimeEvents: RuntimeEvent[];
+}
+
+export interface UninstallAppInput {
+  appId: string;
+  keepData?: boolean;
+}
+
+export interface UninstallAppResult {
+  ok: boolean;
+  appId: string;
+  status: 'removed' | 'uninstalling' | 'blocked';
+  message: string;
+  projectedApp?: DesktopAppProjection;
   runtimeEvents: RuntimeEvent[];
 }
 
@@ -329,6 +385,7 @@ export const LIME_DESKTOP_IPC = {
   appsUpdate: 'apps:update',
   appsEnable: 'apps:enable',
   appsDisable: 'apps:disable',
+  appsUninstall: 'apps:uninstall',
   appsLaunchEntry: 'apps:launchEntry',
   appsInvokeCapability: 'apps:invokeCapability',
   appsGetRuntimeSnapshot: 'apps:getRuntimeSnapshot',
@@ -345,6 +402,7 @@ export const LIME_DESKTOP_IPC = {
   updatesCheck: 'updates:check',
   updatesDownload: 'updates:download',
   updatesApply: 'updates:apply',
+  platformChanged: 'platform:changed',
 } as const;
 
 export type LimeDesktopIpcChannel = (typeof LIME_DESKTOP_IPC)[keyof typeof LIME_DESKTOP_IPC];
@@ -357,6 +415,7 @@ export interface LoginInput {
 export interface LimeDesktopApi {
   platform: {
     getBootstrap: () => Promise<PlatformBootstrap>;
+    onChanged: (listener: (event: PlatformChangeEvent) => void) => () => void;
   };
   apps: {
     listCatalog: () => Promise<CatalogApp[]>;
@@ -367,6 +426,7 @@ export interface LimeDesktopApi {
     update: (appId: string) => Promise<DesktopAppProjection>;
     enable: (appId: string) => Promise<DesktopAppProjection>;
     disable: (appId: string) => Promise<DesktopAppProjection>;
+    uninstall: (input: UninstallAppInput) => Promise<UninstallAppResult>;
     launchEntry: (input: LaunchEntryInput) => Promise<LaunchEntryResult>;
     invokeCapability: (input: CapabilityInvokeInput) => Promise<CapabilityInvokeResult>;
     getRuntimeSnapshot: (input: LaunchEntryInput) => Promise<HostSnapshot | undefined>;

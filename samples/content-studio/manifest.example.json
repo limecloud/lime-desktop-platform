@@ -1,0 +1,34 @@
+{
+  "appId": "content-studio",
+  "displayName": "布谷AI内容工厂",
+  "version": "0.1.0",
+  "installMode": "runtime_backed",
+  "entries": [
+    {
+      "key": "workbench",
+      "kind": "workflow",
+      "label": "内容工作台",
+      "route": "/workbench"
+    },
+    {
+      "key": "settings",
+      "kind": "settings",
+      "label": "业务设置",
+      "route": "/settings"
+    },
+    {
+      "key": "diagnostics",
+      "kind": "diagnostics",
+      "label": "诊断",
+      "route": "/diagnostics"
+    }
+  ],
+  "requires": {
+    "sdkVersion": "1.0.0",
+    "capabilities": ["lime.cloudSession", "lime.modelSettings", "lime.branding", "lime.diagnostics"],
+    "hostKinds": ["electron", "tauri"]
+  },
+  "branding": {
+    "theme": "system"
+  }
+}

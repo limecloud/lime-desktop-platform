@@ -189,6 +189,7 @@ Projection 的职责是把 manifest 转成宿主可读对象，不运行 App 代
 - `apps:update`
 - `apps:enable`
 - `apps:disable`
+- `apps:uninstall`
 - `apps:launchEntry`
 - `apps:invokeCapability`
 - `apps:getRuntimeSnapshot`
@@ -205,6 +206,17 @@ Projection 的职责是把 manifest 转成宿主可读对象，不运行 App 代
 - `updates:check`
 - `updates:download`
 - `updates:apply`
+
+### 7.1 平台变化事件
+
+宿主必须暴露订阅式变化事件，业务 App 不应只靠轮询 bootstrap。
+
+- 事件通道：`platform:changed`
+- Preload API：`window.limeDesktop.platform.onChanged(listener)`
+- 事件载荷：`reason`、`appId`、`entryKey`、`timestamp`、`bootstrap`
+- 典型原因：`app-installed`、`app-updated`、`app-enabled`、`app-disabled`、`app-uninstalled`、`app-launched`、`settings-updated`、`auth-updated`、`billing-updated`、`updates-checked`
+
+业务 App 只能消费事件中的平台投影，不得把 OAuth、billing、模型设置或 OEM 状态复制成自己的权威事实。
 
 ## 8. 存储契约
 

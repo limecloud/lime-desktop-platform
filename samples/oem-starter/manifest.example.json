@@ -1,0 +1,25 @@
+{
+  "appId": "oem-starter",
+  "displayName": "OEM 样板应用",
+  "version": "0.1.0",
+  "installMode": "in_lime",
+  "entries": [
+    {
+      "key": "home",
+      "kind": "page",
+      "label": "入口页",
+      "route": "/home"
+    },
+    {
+      "key": "runtime",
+      "kind": "diagnostics",
+      "label": "运行诊断",
+      "route": "/runtime"
+    }
+  ],
+  "requires": {
+    "sdkVersion": "1.0.0",
+    "capabilities": ["lime.branding", "lime.appUpdates", "lime.diagnostics"],
+    "hostKinds": ["electron", "tauri"]
+  }
+}

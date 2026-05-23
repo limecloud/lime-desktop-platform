@@ -129,6 +129,16 @@ export interface HostSnapshot {
   oemState?: OEMState;
 }
 
+export interface RuntimeBridgeDescriptor {
+  protocol: 'lime.runtimeBridge';
+  version: 1;
+  endpoint: string;
+  token: string;
+  appId: string;
+  entryKey: string;
+  expiresAt: string;
+}
+
 export type HostBridgeMessageType =
   | 'ready'
   | 'snapshot'
@@ -157,6 +167,17 @@ export interface CatalogApp {
   latestVersion: string;
   updatedAt: string;
   releaseNotes: string[];
+  frameworkHighlights?: Array<{
+    label: string;
+    state: ReadinessState | 'dev-projection';
+    detail: string;
+  }>;
+  devRuntime?: {
+    projectRootEnv?: string;
+    relativeProjectRoot?: string;
+    mainEntry?: string;
+    remoteDebuggingPortEnv?: string;
+  };
 }
 
 export type ModelProtocol = 'openai-compatible' | 'anthropic-compatible' | 'gemini-native' | 'local';
@@ -230,6 +251,11 @@ export interface LaunchEntryInput {
   entryKey: string;
 }
 
+export interface UninstallAppInput {
+  appId: string;
+  keepData?: boolean;
+}
+
 export interface CapabilityInvokeInput {
   appId: string;
   entryKey: string;
@@ -238,14 +264,37 @@ export interface CapabilityInvokeInput {
   input?: unknown;
 }
 
+export type PlatformChangeReason =
+  | 'app-installed'
+  | 'app-updated'
+  | 'app-enabled'
+  | 'app-disabled'
+  | 'app-uninstalled'
+  | 'app-launched'
+  | 'settings-updated'
+  | 'auth-updated'
+  | 'billing-updated'
+  | 'updates-checked'
+  | 'runtime-event';
+
+export interface PlatformChangeEvent {
+  reason: PlatformChangeReason;
+  appId?: string;
+  entryKey?: string;
+  timestamp: string;
+  bootstrap: unknown;
+}
+
 export interface LimeDesktopHostApi {
   platform: {
     getBootstrap: () => Promise<unknown>;
+    onChanged: (listener: (event: PlatformChangeEvent) => void) => () => void;
   };
   apps: {
     getProjection: (appId: string) => Promise<DesktopAppProjection>;
     getReadiness: (appId: string) => Promise<ReadinessResult>;
     launchEntry: (input: LaunchEntryInput) => Promise<unknown>;
+    uninstall: (input: UninstallAppInput) => Promise<unknown>;
     invokeCapability: (input: CapabilityInvokeInput) => Promise<unknown>;
     getRuntimeSnapshot: (input: LaunchEntryInput) => Promise<HostSnapshot | undefined>;
   };

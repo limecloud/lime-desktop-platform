@@ -26,6 +26,7 @@ flowchart TB
     Update[更新 / 分发]
     Runtime[Agent App Host Runtime]
     Bridge[Host Bridge]
+    RuntimeBridge[Runtime Bridge 127.0.0.1]
     LocalStore[本地状态 / 缓存]
   end
 
@@ -39,6 +40,7 @@ flowchart TB
   subgraph Apps[业务 App]
     CS[content-studio]
     ZC[zhongcao]
+    ZCRuntime[zhongcao runtime-backed Electron]
     OEMApp[OEM App]
   end
 
@@ -55,6 +57,7 @@ flowchart TB
   PlatformCore --> Update
   PlatformCore --> Runtime
   PlatformCore --> Bridge
+  Runtime --> RuntimeBridge
   PlatformCore --> LocalStore
 
   AppCenter --> Catalog
@@ -65,6 +68,7 @@ flowchart TB
 
   PlatformCore --> CS
   PlatformCore --> ZC
+  RuntimeBridge --> ZCRuntime
   PlatformCore --> OEMApp
 ```
 
@@ -188,7 +192,57 @@ flowchart TD
   Events --> Renderer
 ```
 
-## 8. 适配关系
+## 8. runtime-backed zhongcao 启动图
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant UI as 应用中心
+  participant Main as PlatformService
+  participant Bridge as RuntimeBridgeServer
+  participant ZC as lime.zhongcao Electron
+
+  UI->>Main: apps:launchEntry(lime.zhongcao, diary-workbench)
+  Main->>Main: readiness / Host Snapshot
+  Main->>Bridge: createDescriptor(appId, entryKey, snapshot)
+  Bridge-->>Main: endpoint / token / expiresAt
+  Main->>ZC: spawn + LIME_HOST_SNAPSHOT + LIME_RUNTIME_BRIDGE
+  ZC->>Bridge: POST /snapshot
+  Bridge-->>ZC: non-sensitive Host Snapshot
+  ZC->>Bridge: POST /capability/invoke
+  Bridge->>Main: invokeCapability(...)
+  Main-->>Bridge: CapabilityInvokeResult
+  Bridge-->>ZC: result
+```
+
+## 9. 平台变化事件图
+
+```mermaid
+flowchart TD
+  IPC[状态变更 IPC] --> Service[PlatformService]
+  Service --> Bootstrap[重新读取 bootstrap]
+  Bootstrap --> Event[platform:changed]
+  Event --> Renderer[平台 Renderer]
+  Event --> App[业务 App 订阅方]
+  App --> Recalc[重新计算业务 readiness / UI]
+```
+
+## 10. 卸载生命周期图
+
+```mermaid
+flowchart TD
+  Start([卸载 App]) --> Installed{已安装?}
+  Installed -- 否 --> Blocked[返回 blocked 结果]
+  Installed -- 是 --> Stop[停止 runtime-backed 子进程]
+  Stop --> Revoke[撤销 runtime bridge session]
+  Revoke --> RemoveRecord[移除 installed-apps 记录]
+  RemoveRecord --> RemoveSnapshot[清理 runtime snapshot]
+  RemoveSnapshot --> Project[重建 projection]
+  Project --> Changed[广播 platform:changed]
+  Changed --> End([回到 needs-setup / 未安装状态])
+```
+
+## 11. 适配关系
 
 ```mermaid
 flowchart LR
@@ -198,9 +252,10 @@ flowchart LR
   Contract --> Projection[projection]
   Contract --> Readiness[readiness]
   Contract --> Bridge[Host Bridge]
+  Contract --> RuntimeBridge[Runtime Bridge]
 ```
 
-## 9. 约束
+## 12. 约束
 
 - 图里的所有状态都必须能落到 `src/shared/types.ts`。
 - 任何 UI 行为都要能回到 manifest / projection / readiness / bridge 之一。

@@ -45,6 +45,9 @@ function createWindow(): void {
 app.whenReady().then(() => {
   const platformService = new PlatformService();
   registerIpcHandlers(platformService);
+  app.once('before-quit', () => {
+    platformService.shutdownRuntimeBackedApps();
+  });
 
   app.on('browser-window-created', (_, window) => {
     window.webContents.on('before-input-event', (event, input) => {

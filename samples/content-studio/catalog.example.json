@@ -1,0 +1,8 @@
+{
+  "sourceKind": "cloud",
+  "description": "内容工厂接入样板，复用平台 OAuth、模型设置、品牌和诊断能力。",
+  "categories": ["内容生产", "Agent App"],
+  "latestVersion": "0.1.0",
+  "updatedAt": "2026-05-23T00:00:00.000Z",
+  "releaseNotes": ["建立平台宿主接入样板。", "业务内容流仍留在 content-studio 仓库。"]
+}

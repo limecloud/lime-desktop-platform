@@ -445,6 +445,27 @@ h3 {
   font-size: 12px;
 }
 
+.framework-list {
+  display: grid;
+  gap: 8px;
+}
+
+.framework-row {
+  display: grid;
+  grid-template-columns: auto minmax(88px, 0.6fr) minmax(0, 1.6fr);
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #d9e0ea;
+  border-radius: 7px;
+  background: #fff;
+  padding: 9px;
+}
+
+.framework-row small {
+  color: #64748b;
+  line-height: 1.45;
+}
+
 .metadata-list {
   display: grid;
   gap: 8px;
@@ -492,7 +513,8 @@ h3 {
 
 .status-pill.warn,
 .readiness-badge.needs-setup,
-.readiness-badge.disabled {
+.readiness-badge.disabled,
+.readiness-badge.dev-projection {
   border-color: #fde68a;
   background: #fffbeb;
   color: #854d0e;

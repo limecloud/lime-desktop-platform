@@ -112,6 +112,17 @@ export function App(): ReactElement {
     });
   }, []);
 
+  useEffect(() => {
+    return window.limeDesktop.platform.onChanged((event) => {
+      setBootstrap(event.bootstrap);
+      if (event.reason === 'app-uninstalled') {
+        setRuntimeResult((current) => (current?.appId === event.appId ? undefined : current));
+        setCapabilityResult(undefined);
+      }
+      setSelectedAppId((current) => current ?? event.bootstrap.catalog[0]?.manifest.appId);
+    });
+  }, []);
+
   const selectedCatalogApp = useMemo(() => {
     return bootstrap?.catalog.find((app) => app.manifest.appId === selectedAppId);
   }, [bootstrap?.catalog, selectedAppId]);
@@ -203,6 +214,13 @@ export function App(): ReactElement {
               onInstall={(appId) => runAction(`install:${appId}`, () => window.limeDesktop.apps.install(appId), '安装记录已更新。')}
               onEnable={(appId) => runAction(`enable:${appId}`, () => window.limeDesktop.apps.enable(appId), '入口已启用。')}
               onDisable={(appId) => runAction(`disable:${appId}`, () => window.limeDesktop.apps.disable(appId), '入口已禁用。')}
+              onUninstall={(appId) =>
+                runAction(
+                  `uninstall:${appId}`,
+                  () => window.limeDesktop.apps.uninstall({ appId, keepData: true }),
+                  '应用已从当前工作区卸载。',
+                )
+              }
               onLaunch={async (appId, entryKey) => {
                 const result = await runAction(
                   `launch:${appId}:${entryKey}`,
@@ -317,6 +335,7 @@ interface AppsViewProps {
   onInstall: (appId: string) => void;
   onEnable: (appId: string) => void;
   onDisable: (appId: string) => void;
+  onUninstall: (appId: string) => void;
   onLaunch: (appId: string, entryKey: string) => void;
   onUpdate: (appId: string) => void;
   onOpenSettings: (tab: SettingsTab) => void;
@@ -506,6 +525,21 @@ function AppDetailPanel(props: AppsViewProps): ReactElement {
         </div>
       </section>
 
+      {catalogApp.frameworkHighlights && catalogApp.frameworkHighlights.length > 0 ? (
+        <section className="detail-section">
+          <h3>框架能力</h3>
+          <div className="framework-list">
+            {catalogApp.frameworkHighlights.map((item) => (
+              <div className="framework-row" key={item.label}>
+                <span className={`readiness-badge ${item.state}`}>{item.state}</span>
+                <strong>{item.label}</strong>
+                <small>{item.detail}</small>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       <div className="detail-actions">
         {!installed ? (
           <ActionButton
@@ -530,6 +564,13 @@ function AppDetailPanel(props: AppsViewProps): ReactElement {
               onClick={() => props.onDisable(projection.appId)}
             >
               禁用入口
+            </ActionButton>
+            <ActionButton
+              variant="secondary"
+              busy={props.busyAction === `uninstall:${projection.appId}`}
+              onClick={() => props.onUninstall(projection.appId)}
+            >
+              卸载应用
             </ActionButton>
           </>
         ) : (

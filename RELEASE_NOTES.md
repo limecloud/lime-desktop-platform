@@ -1,5 +1,25 @@
 # Release Notes
 
+## 0.1.1
+
+### 已补强
+
+- 增加 `lime.zhongcao` runtime-backed 启动链路，平台可通过应用中心拉起本地 `zhongcao` Electron App。
+- 增加 127.0.0.1 `RuntimeBridgeServer`，通过短期 token 向 runtime-backed App 提供 `/snapshot` 和 `/capability/invoke`。
+- 增加 `RuntimeBridgeDescriptor`、`platform.onChanged(...)`、`apps.uninstall(...)` 等公开契约。
+- 增加 `platform:changed` 事件，登录、模型、billing、安装、启动、卸载、更新和 capability 调用后可向 renderer/业务 App 广播最新 bootstrap。
+- 增加平台卸载生命周期：停止 runtime-backed 子进程、撤销 runtime bridge session、移除安装记录、清理 runtime snapshot，默认保留业务数据。
+- 统一 `zhongcao` 平台身份为 `lime.zhongcao`，入口为 `diary-workbench`。
+- 扩展 `zhongcao` 样板 manifest，覆盖日记工作台、选题计划、素材库、发布计划和诊断页。
+- 增加 `docs/v1/zhongcao-handoff-prompt.md`，作为另一个开发进程继续开发 zhongcao 的交接提示词。
+- Electron smoke 覆盖 `zhongcao` 子进程启动、runtime bridge capability 调用、平台变化事件和卸载生命周期。
+
+### 验证
+
+- `npm run typecheck`
+- `npm run build`
+- `npm run smoke:electron`
+
 ## 0.1.0
 
 首次可交付平台底座版本。

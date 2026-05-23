@@ -6,12 +6,21 @@ import type {
   LimeDesktopApi,
   LoginInput,
   ModelSettings,
+  PlatformChangeEvent,
   PlatformSettings,
+  UninstallAppInput,
 } from '../shared/types';
 
 const api: LimeDesktopApi = {
   platform: {
     getBootstrap: () => ipcRenderer.invoke(LIME_DESKTOP_IPC.platformBootstrap),
+    onChanged: (listener: (event: PlatformChangeEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: PlatformChangeEvent) => listener(payload);
+      ipcRenderer.on(LIME_DESKTOP_IPC.platformChanged, handler);
+      return () => {
+        ipcRenderer.removeListener(LIME_DESKTOP_IPC.platformChanged, handler);
+      };
+    },
   },
   apps: {
     listCatalog: () => ipcRenderer.invoke(LIME_DESKTOP_IPC.appsListCatalog),
@@ -22,6 +31,7 @@ const api: LimeDesktopApi = {
     update: (appId: string) => ipcRenderer.invoke(LIME_DESKTOP_IPC.appsUpdate, appId),
     enable: (appId: string) => ipcRenderer.invoke(LIME_DESKTOP_IPC.appsEnable, appId),
     disable: (appId: string) => ipcRenderer.invoke(LIME_DESKTOP_IPC.appsDisable, appId),
+    uninstall: (input: UninstallAppInput) => ipcRenderer.invoke(LIME_DESKTOP_IPC.appsUninstall, input),
     launchEntry: (input: LaunchEntryInput) => ipcRenderer.invoke(LIME_DESKTOP_IPC.appsLaunchEntry, input),
     invokeCapability: (input: CapabilityInvokeInput) =>
       ipcRenderer.invoke(LIME_DESKTOP_IPC.appsInvokeCapability, input),
