@@ -1,0 +1,38 @@
+{
+  "appId": "zhongcao",
+  "displayName": "种草日记",
+  "version": "0.1.0",
+  "installMode": "runtime_backed",
+  "entries": [
+    {
+      "key": "diary",
+      "kind": "workflow",
+      "label": "种草日记",
+      "route": "/diary"
+    },
+    {
+      "key": "campaigns",
+      "kind": "page",
+      "label": "选题计划",
+      "route": "/campaigns"
+    },
+    {
+      "key": "diagnostics",
+      "kind": "diagnostics",
+      "label": "诊断",
+      "route": "/diagnostics"
+    }
+  ],
+  "requires": {
+    "sdkVersion": "1.0.0",
+    "capabilities": [
+      "lime.cloudSession",
+      "lime.modelSettings",
+      "lime.branding",
+      "lime.billing",
+      "lime.appUpdates",
+      "lime.diagnostics"
+    ],
+    "hostKinds": ["electron", "tauri"]
+  }
+}

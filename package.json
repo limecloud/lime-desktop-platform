@@ -1,0 +1,39 @@
+{
+  "name": "lime-desktop-platform",
+  "version": "0.1.0",
+  "description": "Lime 桌面平台底座，用于承接 Agent App 宿主、应用中心、模型设置、OAuth、OEM 和充值。",
+  "type": "module",
+  "main": "out/main/index.js",
+  "license": "Apache-2.0",
+  "author": "Lime Cloud",
+  "workspaces": [
+    "packages/contracts"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "tsc --noEmit && electron-vite build",
+    "start": "electron-vite preview",
+    "smoke:electron": "node scripts/electron-smoke.mjs",
+    "smoke:electron:headed": "node scripts/electron-smoke.mjs --headed",
+    "typecheck": "tsc --noEmit",
+    "pack:contracts": "mkdir -p dist && npm pack --workspace @limecloud/desktop-platform-contracts --pack-destination dist",
+    "verify:local": "npm run typecheck && npm run build && npm run smoke:electron"
+  },
+  "dependencies": {
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.60.0",
+    "@types/node": "^25.0.8",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.2",
+    "electron": "^42.1.0",
+    "electron-vite": "^5.0.0",
+    "typescript": "^5.9.3"
+  }
+}
