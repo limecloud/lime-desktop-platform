@@ -116,6 +116,47 @@ export interface HostBridgeMessage<T = unknown> {
   type: 'ready' | 'snapshot' | 'invoke' | 'result' | 'error' | 'toast' | 'navigate' | 'event';
   payload: T;
 }
+
+export interface ReleaseArtifact {
+  url: string;
+  sha256: string;
+  sizeBytes?: number;
+  fileName?: string;
+}
+
+export interface UpdateCandidate {
+  appId: string;
+  currentVersion: string;
+  nextVersion: string;
+  sourceKind: 'cloud' | 'local' | 'oem';
+  artifact?: ReleaseArtifact;
+}
+
+export interface ControlPlaneStatus {
+  configured: boolean;
+  source: 'samples' | 'limecore';
+  baseUrl?: string;
+  catalogUrl?: string;
+  lastSyncedAt?: string;
+  lastError?: string;
+}
+
+export type PlatformNavigationTarget =
+  | 'app-center'
+  | 'auth-settings'
+  | 'model-settings'
+  | 'branding-settings'
+  | 'billing-settings'
+  | 'updates'
+  | 'diagnostics'
+  | 'runtime';
+
+export interface PlatformNavigationIntent {
+  target: PlatformNavigationTarget;
+  appId?: string;
+  entryKey?: string;
+  reason?: string;
+}
 ```
 
 ## 4. Projection
@@ -137,6 +178,7 @@ Projection 的职责是把 manifest 转成宿主可读对象，不运行 App 代
 - permission preview
 - readiness 入口
 - install / update 行为描述
+- release artifact 的下载地址、sha256、大小和文件名
 
 ## 5. Readiness
 
@@ -176,6 +218,7 @@ Projection 的职责是把 manifest 转成宿主可读对象，不运行 App 代
 - `download`
 - `permission:request`
 - `permission:result`
+- `platform:intent`
 
 ## 7. IPC 公共面
 
@@ -207,7 +250,16 @@ Projection 的职责是把 manifest 转成宿主可读对象，不运行 App 代
 - `updates:download`
 - `updates:apply`
 
-### 7.1 平台变化事件
+### 7.1 更新与发布校验
+
+- `updates:check` 必须同步当前 catalog，并返回 `UpdateCandidate[]`。
+- `updates:download` 只有在 catalog 提供 `releaseArtifact` 时才执行真实下载。
+- artifact 必须校验 `sha256`，可选校验 `sizeBytes`。
+- 校验失败必须返回 `blocked`，不得写成下载成功。
+- 已校验 artifact 写入 `.lime-desktop/app-artifacts/`。
+- `updates:apply` 对带 artifact 的更新必须先确认已下载且 verified。
+
+### 7.2 平台变化事件
 
 宿主必须暴露订阅式变化事件，业务 App 不应只靠轮询 bootstrap。
 
@@ -217,6 +269,18 @@ Projection 的职责是把 manifest 转成宿主可读对象，不运行 App 代
 - 典型原因：`app-installed`、`app-updated`、`app-enabled`、`app-disabled`、`app-uninstalled`、`app-launched`、`settings-updated`、`auth-updated`、`billing-updated`、`updates-checked`
 
 业务 App 只能消费事件中的平台投影，不得把 OAuth、billing、模型设置或 OEM 状态复制成自己的权威事实。
+
+### 7.3 平台导航意图
+
+runtime-backed App 不能直接打开宿主内部页面，也不能复制设置 UI。
+业务 App 只能发送导航意图，例如打开模型设置、OAuth、billing、更新或诊断页。
+
+第一阶段 Runtime Bridge 路径：
+
+- `POST /intent/open`
+- 输入：`PlatformNavigationIntent`
+- 输出：`PlatformNavigationResult`
+- 结果：当前 Electron 实现先写入 runtime event，后续 UI 路由聚焦在壳层补齐。
 
 ## 8. 存储契约
 

@@ -109,6 +109,7 @@ repo: lime-desktop-platform
 - 能在平台壳层里展示 `zhongcao` projection。
 - 能从应用中心启动 `lime.zhongcao` 的 runtime-backed Electron App。
 - 能通过 runtime bridge 请求平台裁决 `lime.modelSettings`。平台只返回通用 capability 结果；GEO 草稿生成和写回发生在 `zhongcao` 业务 App 内，并记录 `runtime-projection` 来源。
+- 能通过 runtime bridge 发送 `PlatformNavigationIntent`，例如请求打开模型设置；业务 App 不复制平台设置 UI。
 - 应用中心详情能展示 STREAM 五维、Schema JSON-LD、模型生成和发布 readiness。
 - ready / needs-setup / blocked 能正确区分。
 - 业务页面不需要自己实现登录、模型、品牌和 billing。

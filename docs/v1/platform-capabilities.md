@@ -24,6 +24,8 @@ repo: lime-desktop-platform
 | 平台设置 | 语言、代理、主题、工作区、默认能力开关 | 本地用户设置 | `userData` / workspace | 设置中心 | `needs-setup` |
 | 运行可见性 | 运行状态、证据、错误、日志摘要、调用轨迹 | Host Runtime | 本地运行记录 | 运行页 / 开发者页 | `blocked` / `failed` |
 
+当前实现中，应用目录和更新分发已具备 `limecore` catalog 最小接入链路；OAuth、OEM 和 billing 仍是本地开发态投影，尚未接真实 `limecore` 端点。
+
 ## 3. 共享与不共享
 
 ### 3.1 必须共享
@@ -55,6 +57,7 @@ repo: lime-desktop-platform
 - Host Bridge 会话
 - 用户设置
 - 本地下载缓存
+- 已校验 release artifact
 - App 运行快照
 - 运行日志和证据摘要
 

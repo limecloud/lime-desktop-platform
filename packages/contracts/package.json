@@ -1,6 +1,6 @@
 {
   "name": "@limecloud/desktop-platform-contracts",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Lime Desktop Platform manifest、projection、readiness、Host Bridge 和 IPC 契约。",
   "type": "module",
   "license": "Apache-2.0",

@@ -10,8 +10,11 @@
 import type {
   DesktopAppManifest,
   HostSnapshot,
+  PlatformNavigationIntent,
   PlatformCapability,
+  ReleaseArtifact,
   RuntimeBridgeDescriptor,
+  UpdateCandidate,
 } from '@limecloud/desktop-platform-contracts';
 ```
 
@@ -35,3 +38,5 @@ const stop = window.limeDesktop.platform.onChanged((event) => {
 - 业务 App 通过 `apps.getRuntimeSnapshot(...)` 读取非敏感 Host Snapshot。
 - runtime-backed App 只消费 `RuntimeBridgeDescriptor`，不直接访问 Electron、Node 或平台内部服务。
 - `apps.uninstall({ appId, keepData: true })` 默认只移除平台安装记录和 runtime snapshot，业务数据安全删除另走显式流程。
+- `ReleaseArtifact` 和 `UpdateCandidate` 只描述平台更新事实；业务 App 不直接下载、校验或应用 release 包。
+- `PlatformNavigationIntent` 只表达“请宿主打开某个设置/诊断入口”，业务 App 不复制平台设置 UI。

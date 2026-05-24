@@ -32,6 +32,7 @@ repo: lime-desktop-platform
 - 支持的 runtime bridge 路径：
   - POST /snapshot
   - POST /capability/invoke
+  - POST /intent/open
 - capability 调用必须带业务 action 和 payload，失败要显示 blocked / needs-setup，不允许伪成功。
 
 业务侧最低交付：
@@ -39,6 +40,7 @@ repo: lime-desktop-platform
 - 页面能展示 STREAM 五维、Schema JSON-LD、发布 readiness。
 - window.zhongcao.getWorkspaceSnapshot() 能返回 drafts、generationTasks、runtimeEvents。
 - window.zhongcao.invokeCapability(...) 能通过 runtime bridge 调用 lime.modelSettings，并把生成任务记录为 succeeded / blocked。
+- window.zhongcao.openPlatformIntent(...) 能通过 runtime bridge 请求打开平台设置入口，例如 model-settings。
 - 未收到 LIME_HOST_SNAPSHOT 或 LIME_RUNTIME_BRIDGE 时，页面必须显示可诊断的 blocked 状态。
 
 验证要求：

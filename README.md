@@ -33,8 +33,8 @@ npm run build
 
 v1 第一刀已经落到 `src/`：
 
-- `src/shared/types.ts`：Manifest、projection、readiness、Host Bridge、runtime bridge、IPC、设置和诊断契约。
-- `src/main/services/`：本地状态存储、通用样板目录加载、projection/readiness/snapshot、runtime-backed 启动和 runtime bridge 服务。
+- `src/shared/types.ts`：Manifest、projection、readiness、Host Bridge、runtime bridge、release artifact、IPC、设置和诊断契约。
+- `src/main/services/`：本地状态存储、通用样板目录加载、limecore catalog 适配、release artifact 下载校验、projection/readiness/snapshot、runtime-backed 启动和 runtime bridge 服务。
 - `src/main/ipc.ts`：平台公共 IPC 面和 `platform:changed` 状态变化事件。
 - `src/preload/index.ts`：`window.limeDesktop` 安全桥，含 `platform.onChanged(...)` 订阅。
 - `src/renderer/src/App.tsx`：应用中心、设置中心、运行页、卸载生命周期和开发者诊断页。

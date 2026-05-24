@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -15,6 +16,9 @@ const remoteDebuggingPort = 9733 + Math.floor(Math.random() * 400);
 const zhongcaoRemoteDebuggingPort = remoteDebuggingPort + 500;
 const userDataDir = mkdtempSync(join(tmpdir(), `lime-desktop-platform-smoke-${randomUUID()}-`));
 const headed = process.argv.slice(2).includes('--headed') || process.env.LIME_DESKTOP_TEST_SILENT === '0';
+const releaseBytes = Buffer.from(`lime desktop platform smoke release ${randomUUID()}`, 'utf8');
+const releaseSha256 = createHash('sha256').update(releaseBytes).digest('hex');
+let servedCatalog = [];
 
 if (!existsSync(mainEntry)) {
   console.error(`缺少 ${mainEntry}，请先运行 npm run build。`);
@@ -51,6 +55,92 @@ async function removeDirectoryWithRetry(path) {
       await wait(250);
     }
   }
+}
+
+function readJsonFile(filePath) {
+  return JSON.parse(readFileSync(filePath, 'utf8'));
+}
+
+function readSampleCatalogApp(sampleName) {
+  const sampleRoot = join(projectRoot, 'samples', sampleName);
+  const manifest = readJsonFile(join(sampleRoot, 'manifest.example.json'));
+  const metadata = readJsonFile(join(sampleRoot, 'catalog.example.json'));
+  return {
+    manifest,
+    sourceKind: metadata.sourceKind ?? 'local',
+    description: metadata.description ?? `${manifest.displayName} smoke fixture.`,
+    categories: metadata.categories ?? ['Agent App'],
+    latestVersion: metadata.latestVersion ?? manifest.version,
+    updatedAt: metadata.updatedAt ?? '2026-05-23T00:00:00.000Z',
+    releaseNotes: metadata.releaseNotes ?? ['smoke fixture'],
+    frameworkHighlights: metadata.frameworkHighlights,
+    devRuntime: metadata.devRuntime,
+  };
+}
+
+function createMockCatalog(baseUrl, options = {}) {
+  return ['content-studio', 'oem-starter', 'zhongcao'].map((sampleName) => {
+    const catalogApp = readSampleCatalogApp(sampleName);
+    if (sampleName !== 'oem-starter' || !options.oemUpdateAvailable) {
+      return catalogApp;
+    }
+
+    return {
+      ...catalogApp,
+      latestVersion: '0.1.1',
+      updatedAt: new Date().toISOString(),
+      releaseNotes: ['Smoke: limecore release artifact 校验链路。'],
+      releaseArtifact: {
+        url: `${baseUrl}/artifacts/oem-starter-0.1.1.tgz`,
+        sha256: releaseSha256,
+        sizeBytes: releaseBytes.byteLength,
+        fileName: 'oem-starter-0.1.1.tgz',
+      },
+    };
+  });
+}
+
+async function startMockLimecoreServer() {
+  const server = createServer((request, response) => {
+    if (request.url === '/desktop/v1/catalog') {
+      response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      response.end(JSON.stringify({ catalog: servedCatalog }));
+      return;
+    }
+
+    if (request.url === '/artifacts/oem-starter-0.1.1.tgz') {
+      response.writeHead(200, {
+        'content-type': 'application/gzip',
+        'content-length': String(releaseBytes.byteLength),
+      });
+      response.end(releaseBytes);
+      return;
+    }
+
+    response.writeHead(404, { 'content-type': 'application/json; charset=utf-8' });
+    response.end(JSON.stringify({ error: 'not-found' }));
+  });
+
+  await new Promise((resolveStart, rejectStart) => {
+    server.once('error', rejectStart);
+    server.listen(0, '127.0.0.1', () => resolveStart());
+  });
+
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    throw new Error('mock limecore address unavailable');
+  }
+
+  return {
+    server,
+    baseUrl: `http://127.0.0.1:${address.port}`,
+  };
+}
+
+function closeServer(server) {
+  return new Promise((resolveClose) => {
+    server.close(() => resolveClose());
+  });
 }
 
 async function fetchJson(url) {
@@ -176,7 +266,18 @@ async function waitForZhongcaoReady(cdp, timeoutMs = 20_000) {
       state.hasBridge &&
       text.includes('种草日记') &&
       text.includes('runtime projection') &&
-      text.includes('STREAM 五维')
+      text.includes('STREAM 五维') &&
+      text.includes('宿主框架能力') &&
+      text.includes('应用中心') &&
+      text.includes('模型设置') &&
+      text.includes('打开模型设置') &&
+      text.includes('OAuth / 会话') &&
+      text.includes('OEM / 品牌') &&
+      text.includes('充值 / 订阅') &&
+      text.includes('更新 / 分发') &&
+      text.includes('Agent Runtime') &&
+      text.includes('Host Bridge') &&
+      text.includes('本地状态 / 缓存')
     ) {
       return state;
     }
@@ -218,6 +319,9 @@ if (process.env.CI === 'true' && process.platform === 'linux') {
   electronArgs.push('--no-sandbox');
 }
 
+const mockLimecore = await startMockLimecoreServer();
+servedCatalog = createMockCatalog(mockLimecore.baseUrl);
+
 const child = spawn(electronPath, electronArgs, {
   cwd: projectRoot,
   env: {
@@ -225,6 +329,7 @@ const child = spawn(electronPath, electronArgs, {
     ELECTRON_ENABLE_LOGGING: '1',
     LIME_DESKTOP_SMOKE: '1',
     LIME_DESKTOP_TEST_SILENT: headed ? '0' : '1',
+    LIMECORE_CATALOG_URL: `${mockLimecore.baseUrl}/desktop/v1/catalog`,
     LIME_ZHONGCAO_REMOTE_DEBUGGING_PORT: String(zhongcaoRemoteDebuggingPort),
   },
   stdio: ['ignore', 'pipe', 'pipe'],
@@ -264,10 +369,13 @@ try {
       appId: 'lime.zhongcao',
       entryKey: 'diary-workbench',
     });
+    const oemProjection = await window.limeDesktop.apps.install('oem-starter');
     return {
       catalogCount: bootstrap.catalog.length,
+      controlPlaneSource: bootstrap.diagnostics.controlPlane.source,
       hasProjection: projection.appId === 'content-studio',
       hasZhongcaoProjection: zhongcaoProjection.appId === 'lime.zhongcao',
+      hasOemProjection: oemProjection.appId === 'oem-starter',
       billingState: billing.state,
       launched: launch.launched,
       snapshotAppId: launch.snapshot?.appId,
@@ -280,8 +388,10 @@ try {
 
   if (
     bridgeState.catalogCount < 3 ||
+    bridgeState.controlPlaneSource !== 'limecore' ||
     !bridgeState.hasProjection ||
     !bridgeState.hasZhongcaoProjection ||
+    !bridgeState.hasOemProjection ||
     bridgeState.billingState !== 'active' ||
     !bridgeState.launched ||
     bridgeState.snapshotAppId !== 'content-studio' ||
@@ -291,6 +401,45 @@ try {
   ) {
     throw new Error(`Smoke 状态不符合预期：${JSON.stringify(bridgeState)}`);
   }
+
+  servedCatalog = createMockCatalog(mockLimecore.baseUrl, { oemUpdateAvailable: true });
+  const updateState = await evaluate(cdp, `(async () => {
+    const checked = await window.limeDesktop.updates.check();
+    const update = checked.availableUpdates.find((item) => item.appId === 'oem-starter');
+    const downloaded = await window.limeDesktop.updates.download('oem-starter');
+    const applied = await window.limeDesktop.updates.apply('oem-starter');
+    const installed = await window.limeDesktop.apps.listInstalled();
+    const oemRecord = installed.find((item) => item.appId === 'oem-starter');
+    return {
+      controlPlaneSource: checked.controlPlane?.source,
+      updateNextVersion: update?.nextVersion,
+      updateHasArtifact: Boolean(update?.artifact?.sha256),
+      downloadedOk: downloaded.ok,
+      downloadedState: downloaded.state,
+      downloadedVerified: downloaded.updateState.downloadedUpdates?.some((item) =>
+        item.appId === 'oem-starter' && item.version === '0.1.1' && item.verified
+      ),
+      appliedOk: applied.ok,
+      appliedState: applied.state,
+      installedVersion: oemRecord?.version,
+      packageHashMatches: oemRecord?.packageHash === update?.artifact?.sha256,
+    };
+  })()`, true);
+  if (
+    updateState.controlPlaneSource !== 'limecore' ||
+    updateState.updateNextVersion !== '0.1.1' ||
+    !updateState.updateHasArtifact ||
+    !updateState.downloadedOk ||
+    updateState.downloadedState !== 'downloaded' ||
+    !updateState.downloadedVerified ||
+    !updateState.appliedOk ||
+    updateState.appliedState !== 'applied' ||
+    updateState.installedVersion !== '0.1.1' ||
+    !updateState.packageHashMatches
+  ) {
+    throw new Error(`更新分发状态不符合预期：${JSON.stringify(updateState)}`);
+  }
+  bridgeState.limecoreRelease = true;
 
   const zhongcaoTarget = await waitForTarget(
     zhongcaoRemoteDebuggingPort,
@@ -309,11 +458,20 @@ try {
       });
       const after = await window.zhongcao.getWorkspaceSnapshot();
       const task = after.data.generationTasks[0];
+      const intent = await window.zhongcao.openPlatformIntent({
+        target: 'model-settings',
+        reason: 'smoke 验证业务 App 只发送平台设置导航意图'
+      });
+      const afterIntent = await window.zhongcao.getWorkspaceSnapshot();
       return {
         taskAction: task?.action,
         taskSource: task?.source,
         taskStatus: task?.status,
         taskId: task?.id,
+        intentOk: intent.ok,
+        intentSource: intent.source,
+        intentTarget: intent.target,
+        intentEventMessage: afterIntent.data.runtimeEvents[0]?.message,
         eventMessage: after.data.runtimeEvents[0]?.message,
       };
     })()`, true);
@@ -322,11 +480,16 @@ try {
       runtimeBridgeState.taskSource !== 'runtime-projection' ||
       runtimeBridgeState.taskStatus !== 'succeeded' ||
       !runtimeBridgeState.taskId ||
+      !runtimeBridgeState.intentOk ||
+      runtimeBridgeState.intentSource !== 'runtime-projection' ||
+      runtimeBridgeState.intentTarget !== 'model-settings' ||
+      !runtimeBridgeState.intentEventMessage?.includes('平台导航意图已发送') ||
       !runtimeBridgeState.eventMessage?.includes('runtime bridge 能力调用完成')
     ) {
       throw new Error(`runtime bridge 状态不符合预期：${JSON.stringify(runtimeBridgeState)}`);
     }
     bridgeState.zhongcaoRuntimeBridge = true;
+    bridgeState.zhongcaoPlatformIntent = true;
   } finally {
     zhongcaoCdp.close();
   }
@@ -388,5 +551,6 @@ try {
   cdp?.close();
   child.kill();
   await waitForChildExit(child);
+  await closeServer(mockLimecore.server);
   await removeDirectoryWithRetry(userDataDir);
 }

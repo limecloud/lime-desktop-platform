@@ -30,6 +30,7 @@ repo: lime-desktop-platform
 | [`implementation-plan.md`](./implementation-plan.md) | 研发切片、目录建议、验证方式和落地顺序。 |
 | [`platform-methodology.md`](./platform-methodology.md) | 平台方法论、事实源顺序和开发原则。 |
 | [`host-runtime-playbook.md`](./host-runtime-playbook.md) | 宿主运行手册、常见动作和故障恢复路径。 |
+| [`limecore-control-plane.md`](./limecore-control-plane.md) | limecore catalog、release artifact 和更新校验接入边界。 |
 | [`user-story-flow-map.md`](./user-story-flow-map.md) | 角色、路径、页面和主动作映射。 |
 | [`completion-audit.md`](./completion-audit.md) | v1 完成门槛、风险和开发验收清单。 |
 | [`zhongcao-integration.md`](./zhongcao-integration.md) | zhongcao 接入平台的能力边界、启动顺序和 manifest 样板。 |

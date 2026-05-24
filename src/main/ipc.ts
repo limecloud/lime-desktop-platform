@@ -16,17 +16,17 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function broadcastPlatformChange(
+async function broadcastPlatformChange(
   platformService: PlatformService,
   reason: PlatformChangeReason,
   context: { appId?: string; entryKey?: string } = {},
-): void {
+): Promise<void> {
   const event: PlatformChangeEvent = {
     reason,
     appId: context.appId,
     entryKey: context.entryKey,
     timestamp: nowIso(),
-    bootstrap: platformService.getBootstrap(),
+    bootstrap: await platformService.getBootstrap(),
   };
 
   for (const window of BrowserWindow.getAllWindows()) {
@@ -41,7 +41,7 @@ async function withPlatformChange<T>(
   action: () => T | Promise<T>,
 ): Promise<T> {
   const result = await action();
-  broadcastPlatformChange(platformService, reason, context);
+  await broadcastPlatformChange(platformService, reason, context);
   return result;
 }
 

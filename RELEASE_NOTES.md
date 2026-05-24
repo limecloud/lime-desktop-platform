@@ -1,5 +1,22 @@
 # Release Notes
 
+## 0.1.2
+
+### 已补强
+
+- 增加 `limecoreControlPlane`，支持通过 `LIMECORE_CATALOG_URL` 或 `LIMECORE_BASE_URL` 拉取云端 catalog。
+- 增加 `ReleaseArtifact`、`UpdateCandidate`、`DownloadedUpdateArtifact` 和 `ControlPlaneStatus` 契约。
+- 增加 `releaseDownloader`，真实下载 release artifact 并校验 sha256 和可选 size。
+- `updates:check` 可强制同步 catalog，`updates:download` 和 `updates:apply` 对带 artifact 的更新执行下载、校验和应用门槛。
+- 增加 `PlatformNavigationIntent`，runtime-backed App 可请求打开平台设置入口，不复制平台设置 UI。
+- Electron smoke 增加本地 mock `limecore`，覆盖云端目录、更新发现、artifact 下载、sha256 校验和安装记录切换。
+
+### 仍未完成
+
+- OAuth、billing、OEM 真实 `limecore` 端点。
+- release 签名验证、回滚包管理和差分更新。
+- Tauri adapter。
+
 ## 0.1.1
 
 ### 已补强

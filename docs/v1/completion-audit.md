@@ -42,7 +42,7 @@ repo: lime-desktop-platform
 - [x] OAuth / 会话可用
 - [x] OEM / 品牌可用
 - [x] 充值 / 订阅可用
-- [ ] 更新 / 分发可用
+- [x] 更新 / 分发最小链路可用
 - [x] 运行页可用
 
 ### 2.4 复用门槛
@@ -102,7 +102,7 @@ repo: lime-desktop-platform
 - [x] OAuth / 会话开发态投影可用
 - [x] OEM / 品牌开发态投影可用
 - [x] 充值 / 订阅开发态投影可用
-- [ ] 更新 / 分发可用
+- [x] 更新 / 分发最小链路可用
 - [x] 运行页可用
 - [x] 开发者页可用
 - [x] 卸载生命周期可用
@@ -140,7 +140,11 @@ repo: lime-desktop-platform
 已落地：
 
 - `src/shared/types.ts` 提供 manifest、projection、readiness、Host Bridge、IPC、模型设置、OAuth、OEM、billing、diagnostics 契约。
+- `src/shared/types.ts` 提供 `ReleaseArtifact`、`UpdateCandidate`、`DownloadedUpdateArtifact` 和 `ControlPlaneStatus` 契约。
+- `src/shared/types.ts` 和 contracts 包提供 `PlatformNavigationIntent`，runtime-backed App 可请求打开平台设置入口而不复制设置 UI。
 - `src/main/services/seedCatalog.ts` 只负责从 `samples/*` 通用加载开发态应用中心 fixture，不在平台核心 hard code 具体业务 App；`samples/zhongcao` 提供 GEO / STREAM / Schema / 发布 readiness 样板元数据。
+- `src/main/services/limecoreControlPlane.ts` 提供唯一 `limecore` catalog 适配边界，支持 `LIMECORE_CATALOG_URL`、`LIMECORE_BASE_URL` 和 bearer token。
+- `src/main/services/releaseDownloader.ts` 提供唯一 release artifact 下载、大小校验和 sha256 校验边界。
 - `src/main/services/platformService.ts` 提供安装、启用、禁用、卸载保留数据、readiness、snapshot、capability invoke、runtime-backed 启动和设置同步的最小实现。
 - `src/main/services/platformStore.ts` 将工作区级事实写入 `.lime-desktop/`，将用户级配置写入 Electron `userData/state`。
 - `src/preload/index.ts` 暴露 `window.limeDesktop`，renderer 不直接访问主进程实现。
@@ -148,7 +152,8 @@ repo: lime-desktop-platform
 
 未完成：
 
-- 真实云端目录、OAuth、billing、更新下载仍是本地投影和开发态模拟。
+- OAuth、billing 和 OEM 仍是本地开发态投影，尚未接入 `limecore` 真实端点。
+- 真实更新下载已具备 catalog + artifact + sha256 的最小链路，但还没有签名验证、包回滚和差分更新。
 - `zhongcao` 当前以本地 runtime-backed Electron App 接入，Host Snapshot 通过非敏感 runtime projection 注入，平台 capability 通过 127.0.0.1 runtime bridge 裁决；完整嵌入式 Host Bridge/WebView 仍未完成。
 - Tauri adapter 还未创建。
 
@@ -157,5 +162,6 @@ repo: lime-desktop-platform
 - `npm install` 完成，生成 `package-lock.json`。
 - `npm run verify:local` 通过，覆盖 `typecheck`、`build` 和 `smoke:electron`。
 - Electron smoke 覆盖平台 bootstrap、`content-studio` 安装、登录投影、模型设置、billing 刷新、入口启动、host snapshot 和 capability invoke。
-- Electron smoke 作为专项 fixture 验收覆盖 `lime.zhongcao` 安装、readiness 补齐、应用中心启动、业务窗口 preload 注入、runtime projection、runtime bridge capability 调用、STREAM 五维显示、平台变化事件和卸载生命周期；平台核心只提供通用 capability 裁决，不写 GEO 草稿。
+- Electron smoke 启动本地 mock `limecore`，覆盖 `LIMECORE_CATALOG_URL` catalog 同步、`oem-starter` 更新发现、release artifact 下载、sha256 校验、应用更新和 packageHash 写入。
+- Electron smoke 作为专项 fixture 验收覆盖 `lime.zhongcao` 安装、readiness 补齐、应用中心启动、业务窗口 preload 注入、runtime projection、runtime bridge capability 调用、平台导航意图、STREAM 五维显示、平台变化事件和卸载生命周期；平台核心只提供通用 capability 裁决，不写 GEO 草稿。
 - `npm run governance:hardcode-scan` 用于阻止 `zhongcao`、GEO 或其他业务样板硬编码回流到平台核心目录。

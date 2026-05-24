@@ -61,6 +61,10 @@ export class PlatformStore {
     return this.paths;
   }
 
+  getAppArtifactsDir(): string {
+    return join(this.paths.workspaceStateDir, 'app-artifacts');
+  }
+
   readInstalledApps(): InstalledAppRecord[] {
     return readJson<InstalledAppRecord[]>(join(this.paths.workspaceStateDir, 'installed-apps.json'), []);
   }

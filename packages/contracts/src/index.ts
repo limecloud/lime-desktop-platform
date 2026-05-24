@@ -6,6 +6,7 @@ export type BillingState = 'unknown' | 'active' | 'needs-payment' | 'suspended';
 export type OAuthState = 'unauthenticated' | 'authenticated' | 'expired';
 export type OEMState = 'unbranded' | 'branded' | 'customized';
 export type InstallMode = 'in_lime' | 'standalone' | 'runtime_backed';
+export type ControlPlaneCatalogSource = 'samples' | 'limecore';
 export type AppEntryKind = 'page' | 'workflow' | 'expert-chat' | 'settings' | 'diagnostics';
 
 export type AppLifecycleState =
@@ -167,6 +168,7 @@ export interface CatalogApp {
   latestVersion: string;
   updatedAt: string;
   releaseNotes: string[];
+  releaseArtifact?: ReleaseArtifact;
   frameworkHighlights?: Array<{
     label: string;
     state: ReadinessState | 'dev-projection';
@@ -178,6 +180,13 @@ export interface CatalogApp {
     mainEntry?: string;
     remoteDebuggingPortEnv?: string;
   };
+}
+
+export interface ReleaseArtifact {
+  url: string;
+  sha256: string;
+  sizeBytes?: number;
+  fileName?: string;
 }
 
 export type ModelProtocol = 'openai-compatible' | 'anthropic-compatible' | 'gemini-native' | 'local';
@@ -246,6 +255,41 @@ export interface PlatformSettings {
   developerMode: boolean;
 }
 
+export interface UpdateCandidate {
+  appId: string;
+  currentVersion: string;
+  nextVersion: string;
+  sourceKind: SourceKind;
+  artifact?: ReleaseArtifact;
+}
+
+export interface DownloadedUpdateArtifact {
+  appId: string;
+  version: string;
+  fileName: string;
+  filePath: string;
+  sha256: string;
+  sizeBytes: number;
+  downloadedAt: string;
+  verified: boolean;
+}
+
+export interface ControlPlaneStatus {
+  configured: boolean;
+  source: ControlPlaneCatalogSource;
+  baseUrl?: string;
+  catalogUrl?: string;
+  lastSyncedAt?: string;
+  lastError?: string;
+}
+
+export interface UpdateState {
+  checkedAt?: string;
+  availableUpdates: UpdateCandidate[];
+  downloadedUpdates?: DownloadedUpdateArtifact[];
+  controlPlane?: ControlPlaneStatus;
+}
+
 export interface LaunchEntryInput {
   appId: string;
   entryKey: string;
@@ -262,6 +306,30 @@ export interface CapabilityInvokeInput {
   capability: PlatformCapability;
   operation: string;
   input?: unknown;
+}
+
+export type PlatformNavigationTarget =
+  | 'app-center'
+  | 'auth-settings'
+  | 'model-settings'
+  | 'branding-settings'
+  | 'billing-settings'
+  | 'updates'
+  | 'diagnostics'
+  | 'runtime';
+
+export interface PlatformNavigationIntent {
+  target: PlatformNavigationTarget;
+  appId?: string;
+  entryKey?: string;
+  reason?: string;
+}
+
+export interface PlatformNavigationResult {
+  ok: boolean;
+  target: PlatformNavigationTarget;
+  message: string;
+  event: unknown;
 }
 
 export type PlatformChangeReason =

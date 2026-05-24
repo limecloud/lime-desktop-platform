@@ -1,6 +1,6 @@
 {
   "name": "lime-desktop-platform",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Lime 桌面平台底座，用于承接 Agent App 宿主、应用中心、模型设置、OAuth、OEM 和充值。",
   "type": "module",
   "main": "out/main/index.js",

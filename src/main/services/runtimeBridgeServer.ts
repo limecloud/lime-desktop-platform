@@ -5,6 +5,8 @@ import type {
   CapabilityInvokeInput,
   CapabilityInvokeResult,
   HostSnapshot,
+  PlatformNavigationIntent,
+  PlatformNavigationResult,
   RuntimeBridgeDescriptor,
 } from '../../shared/types';
 
@@ -50,7 +52,10 @@ export class RuntimeBridgeServer {
   private endpoint?: string;
   private sessions = new Map<string, RuntimeBridgeSession>();
 
-  constructor(private readonly invokeCapability: (input: CapabilityInvokeInput) => CapabilityInvokeResult) {}
+  constructor(
+    private readonly invokeCapability: (input: CapabilityInvokeInput) => CapabilityInvokeResult,
+    private readonly openNavigationIntent: (input: PlatformNavigationIntent) => PlatformNavigationResult,
+  ) {}
 
   async createDescriptor(input: { appId: string; entryKey: string; snapshot: HostSnapshot }): Promise<RuntimeBridgeDescriptor> {
     const endpoint = await this.ensureStarted();
@@ -140,6 +145,22 @@ export class RuntimeBridgeServer {
           capability: body?.capability ?? 'lime.diagnostics',
           operation: typeof body?.operation === 'string' ? body.operation : 'runtime-bridge',
           input: body?.input,
+        });
+        writeJson(response, 200, { ok: true, result });
+        return;
+      }
+
+      if (request.url === '/intent/open') {
+        const body = (await readRequestBody(request)) as Partial<PlatformNavigationIntent> | undefined;
+        if (!body?.target) {
+          writeJson(response, 400, { ok: false, error: { code: 'intent-target-required', message: '缺少导航目标。' } });
+          return;
+        }
+        const result = this.openNavigationIntent({
+          target: body.target,
+          appId: session.appId,
+          entryKey: session.entryKey,
+          reason: typeof body.reason === 'string' ? body.reason : undefined,
         });
         writeJson(response, 200, { ok: true, result });
         return;

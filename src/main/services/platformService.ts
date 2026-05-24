@@ -5,7 +5,9 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { app } from 'electron';
 import { seedCatalog } from './seedCatalog';
+import { LimecoreControlPlane } from './limecoreControlPlane';
 import { PlatformStore } from './platformStore';
+import { downloadAndVerifyReleaseArtifact } from './releaseDownloader';
 import { RuntimeBridgeServer } from './runtimeBridgeServer';
 import type {
   BillingSnapshot,
@@ -15,6 +17,7 @@ import type {
   CloudSessionSnapshot,
   DesktopAppManifest,
   DesktopAppProjection,
+  DownloadedUpdateArtifact,
   HostBridgeMessage,
   HostProfile,
   HostSnapshot,
@@ -25,6 +28,8 @@ import type {
   ModelSettings,
   PlatformBootstrap,
   PlatformCapability,
+  PlatformNavigationIntent,
+  PlatformNavigationResult,
   PlatformSettings,
   ReadinessReason,
   ReadinessResult,
@@ -32,6 +37,7 @@ import type {
   UninstallAppInput,
   UninstallAppResult,
   UpdateActionResult,
+  UpdateCandidate,
   UpdateState,
 } from '../../shared/types';
 
@@ -65,15 +71,21 @@ function entryLabel(entry: DesktopAppManifest['entries'][number]): string {
 
 export class PlatformService {
   private readonly store = new PlatformStore();
-  private readonly catalog = seedCatalog;
+  private catalog = seedCatalog;
+  private readonly controlPlane = new LimecoreControlPlane();
   private readonly childProcesses = new Map<string, ChildProcess>();
-  private readonly runtimeBridge = new RuntimeBridgeServer((input) => this.invokeCapability(input));
+  private readonly runtimeBridge = new RuntimeBridgeServer(
+    (input) => this.invokeCapability(input),
+    (input) => this.openNavigationIntent(input),
+  );
+  private lastCatalogSyncAt = 0;
 
-  getBootstrap(): PlatformBootstrap {
+  async getBootstrap(): Promise<PlatformBootstrap> {
+    await this.syncCatalog();
     const projections = this.listProjections();
     return {
       hostProfile: this.getHostProfile(),
-      catalog: this.listCatalog(),
+      catalog: this.catalog,
       installedApps: this.listInstalled(),
       projections,
       modelSettings: this.getModelSettings(),
@@ -81,13 +93,14 @@ export class PlatformService {
       billingState: this.getBillingState(),
       oemProjection: this.getOEMProjection(),
       platformSettings: this.getPlatformSettings(),
-      updateState: this.checkUpdates(),
+      updateState: this.createUpdateState(),
       diagnostics: this.getDiagnostics(),
       runtimeEvents: this.store.readRuntimeEvents(),
     };
   }
 
-  listCatalog(): CatalogApp[] {
+  async listCatalog(): Promise<CatalogApp[]> {
+    await this.syncCatalog();
     return this.catalog;
   }
 
@@ -95,27 +108,32 @@ export class PlatformService {
     return this.store.readInstalledApps();
   }
 
-  getProjection(appId: string): DesktopAppProjection {
+  async getProjection(appId: string): Promise<DesktopAppProjection> {
+    await this.syncCatalog();
     const catalogApp = this.requireCatalogApp(appId);
     return this.createProjection(catalogApp);
   }
 
-  getReadiness(appId: string): ReadinessResult {
+  async getReadiness(appId: string): Promise<ReadinessResult> {
+    await this.syncCatalog();
     const catalogApp = this.requireCatalogApp(appId);
     return this.calculateReadiness(catalogApp.manifest);
   }
 
-  installApp(appId: string): DesktopAppProjection {
+  async installApp(appId: string, options: { packageHash?: string } = {}): Promise<DesktopAppProjection> {
+    await this.syncCatalog();
     const catalogApp = this.requireCatalogApp(appId);
     const installedApps = this.listInstalled();
     const existing = installedApps.find((record) => record.appId === appId);
     const timestamp = nowIso();
     const manifestHash = hashValue(catalogApp.manifest);
-    const packageHash = hashValue({
-      appId,
-      version: catalogApp.latestVersion,
-      sourceKind: catalogApp.sourceKind,
-    });
+    const packageHash =
+      options.packageHash ??
+      hashValue({
+        appId,
+        version: catalogApp.latestVersion,
+        sourceKind: catalogApp.sourceKind,
+      });
 
     const nextRecord: InstalledAppRecord = {
       appId,
@@ -147,7 +165,8 @@ export class PlatformService {
     return this.getProjection(appId);
   }
 
-  updateApp(appId: string): DesktopAppProjection {
+  async updateApp(appId: string): Promise<DesktopAppProjection> {
+    await this.syncCatalog(true);
     const installed = this.requireInstalledApp(appId);
     const catalogApp = this.requireCatalogApp(appId);
 
@@ -163,19 +182,22 @@ export class PlatformService {
     return this.installApp(appId);
   }
 
-  enableApp(appId: string): DesktopAppProjection {
+  async enableApp(appId: string): Promise<DesktopAppProjection> {
+    await this.syncCatalog();
     this.setAppEnabled(appId, true);
     this.appendEvent({ level: 'info', appId, message: '应用入口已启用。' });
     return this.persistProjection(appId);
   }
 
-  disableApp(appId: string): DesktopAppProjection {
+  async disableApp(appId: string): Promise<DesktopAppProjection> {
+    await this.syncCatalog();
     this.setAppEnabled(appId, false);
     this.appendEvent({ level: 'warning', appId, message: '应用入口已禁用。' });
     return this.persistProjection(appId);
   }
 
-  uninstallApp(input: UninstallAppInput): UninstallAppResult {
+  async uninstallApp(input: UninstallAppInput): Promise<UninstallAppResult> {
+    await this.syncCatalog();
     const installedApps = this.listInstalled();
     const installed = installedApps.find((record) => record.appId === input.appId);
     const catalogApp = this.requireCatalogApp(input.appId);
@@ -192,7 +214,7 @@ export class PlatformService {
         appId: input.appId,
         status: 'blocked',
         message: '应用尚未安装。',
-        projectedApp: this.getProjection(input.appId),
+        projectedApp: this.createProjection(catalogApp),
         runtimeEvents: [event, ...this.store.readRuntimeEvents().filter((item) => item.id !== event.id).slice(-19)],
       };
     }
@@ -222,7 +244,7 @@ export class PlatformService {
   }
 
   async launchEntry(input: LaunchEntryInput): Promise<LaunchEntryResult> {
-    const projection = this.getProjection(input.appId);
+    const projection = await this.getProjection(input.appId);
     const readiness = projection.readiness;
     const entry = projection.entryCards.find((item) => item.key === input.entryKey);
 
@@ -349,6 +371,26 @@ export class PlatformService {
     };
   }
 
+  openNavigationIntent(input: PlatformNavigationIntent): PlatformNavigationResult {
+    const event = this.appendEvent({
+      level: 'info',
+      appId: input.appId,
+      entryKey: input.entryKey,
+      message: `业务 App 请求打开平台入口：${input.target}`,
+      payload: {
+        target: input.target,
+        reason: input.reason,
+      },
+    });
+
+    return {
+      ok: true,
+      target: input.target,
+      message: '平台已接收导航意图，当前开发态以事件记录代替真实窗口聚焦。',
+      event,
+    };
+  }
+
   getRuntimeSnapshot(input: LaunchEntryInput): HostSnapshot | undefined {
     return this.store.readRuntimeSnapshots()[this.snapshotKey(input)];
   }
@@ -452,53 +494,95 @@ export class PlatformService {
     return this.store.readOEMProjection();
   }
 
-  checkUpdates(): UpdateState {
-    const installedApps = this.listInstalled();
-    const availableUpdates = installedApps.flatMap((installed) => {
-      const catalogApp = this.catalog.find((item) => item.manifest.appId === installed.appId);
-      if (!catalogApp || catalogApp.latestVersion === installed.version) {
-        return [];
-      }
-
-      return [
-        {
-          appId: installed.appId,
-          currentVersion: installed.version,
-          nextVersion: catalogApp.latestVersion,
-          sourceKind: catalogApp.sourceKind,
-        },
-      ];
-    });
-
-    const updateState: UpdateState = {
-      checkedAt: nowIso(),
-      availableUpdates,
-    };
+  async checkUpdates(): Promise<UpdateState> {
+    await this.syncCatalog(true);
+    const updateState = this.createUpdateState();
     this.store.writeUpdateState(updateState);
     return updateState;
   }
 
-  downloadUpdate(appId: string): UpdateActionResult {
-    const updateState = this.checkUpdates();
+  async downloadUpdate(appId: string): Promise<UpdateActionResult> {
+    const updateState = await this.checkUpdates();
     const update = updateState.availableUpdates.find((item) => item.appId === appId);
-    const event = this.appendEvent({
-      level: update ? 'info' : 'warning',
-      appId,
-      message: update ? '更新包已进入开发态下载队列。' : '没有可下载的更新。',
-      payload: update,
-    });
 
-    return {
-      ok: Boolean(update),
-      state: update ? 'downloaded' : 'idle',
-      message: update ? '开发态已记录下载结果，真实下载由后续 limecore release 接入。' : '当前没有可用更新。',
-      updateState,
-      event,
-    };
+    if (!update) {
+      const event = this.appendEvent({
+        level: 'warning',
+        appId,
+        message: '没有可下载的更新。',
+      });
+
+      return {
+        ok: false,
+        state: 'idle',
+        message: '当前没有可用更新。',
+        updateState,
+        event,
+      };
+    }
+
+    if (!update.artifact) {
+      const event = this.appendEvent({
+        level: 'warning',
+        appId,
+        message: '更新缺少 release artifact，已阻断下载。',
+        payload: update,
+      });
+
+      return {
+        ok: false,
+        state: 'blocked',
+        message: '目录存在新版本，但缺少可校验的 release artifact。',
+        updateState,
+        event,
+      };
+    }
+
+    try {
+      const downloaded = await downloadAndVerifyReleaseArtifact({
+        appId,
+        version: update.nextVersion,
+        artifact: update.artifact,
+        destinationRoot: this.store.getAppArtifactsDir(),
+      });
+      const nextUpdateState = this.storeDownloadedUpdate(downloaded);
+      const event = this.appendEvent({
+        level: 'info',
+        appId,
+        message: '更新包已下载并通过 sha256 校验。',
+        payload: downloaded,
+      });
+
+      return {
+        ok: true,
+        state: 'downloaded',
+        message: '更新包已下载并校验完成。',
+        updateState: nextUpdateState,
+        event,
+      };
+    } catch (error) {
+      const event = this.appendEvent({
+        level: 'error',
+        appId,
+        message: '更新包下载或校验失败。',
+        payload: {
+          error: error instanceof Error ? error.message : 'download failed',
+          update,
+        },
+      });
+
+      return {
+        ok: false,
+        state: 'blocked',
+        message: error instanceof Error ? error.message : '更新包下载或校验失败。',
+        updateState,
+        event,
+      };
+    }
   }
 
-  applyUpdate(appId: string): UpdateActionResult {
-    const updateState = this.checkUpdates();
+  async applyUpdate(appId: string): Promise<UpdateActionResult> {
+    const updateState = await this.checkUpdates();
     const update = updateState.availableUpdates.find((item) => item.appId === appId);
     if (!update) {
       const event = this.appendEvent({
@@ -516,19 +600,36 @@ export class PlatformService {
       };
     }
 
-    const projection = this.installApp(appId);
-    const nextUpdateState = this.checkUpdates();
+    if (update.artifact && !this.findDownloadedUpdate(updateState, update)) {
+      const event = this.appendEvent({
+        level: 'warning',
+        appId,
+        message: '更新包尚未下载或校验未通过。',
+        payload: update,
+      });
+
+      return {
+        ok: false,
+        state: 'blocked',
+        message: '请先下载并校验更新包。',
+        updateState,
+        event,
+      };
+    }
+
+    const projection = await this.installApp(appId, { packageHash: update.artifact?.sha256 });
+    const nextUpdateState = await this.checkUpdates();
     const event = this.appendEvent({
       level: 'info',
       appId,
-      message: '开发态更新已应用到本地安装记录。',
+      message: update.artifact ? '更新已从已校验 release artifact 应用。' : '开发态更新已应用到本地安装记录。',
       payload: { readiness: projection.readiness },
     });
 
     return {
       ok: true,
       state: 'applied',
-      message: '已切换到目录中的最新版本。',
+      message: update.artifact ? '已切换到已校验的 release 版本。' : '已切换到目录中的最新版本。',
       updateState: nextUpdateState,
       event,
     };
@@ -546,8 +647,73 @@ export class PlatformService {
         runtimeEvents: runtimeEvents.length,
       },
       hostProfile: this.getHostProfile(),
+      controlPlane: this.controlPlane.getStatus(),
       lastEvents: runtimeEvents.slice(-20).reverse(),
     };
+  }
+
+  private async syncCatalog(force = false): Promise<void> {
+    const syncIntervalMs = 30_000;
+    if (!force && Date.now() - this.lastCatalogSyncAt < syncIntervalMs) {
+      return;
+    }
+
+    this.catalog = await this.controlPlane.fetchCatalog(seedCatalog);
+    this.lastCatalogSyncAt = Date.now();
+  }
+
+  private createUpdateState(): UpdateState {
+    const existingState = this.store.readUpdateState();
+    const installedApps = this.listInstalled();
+    const availableUpdates: UpdateCandidate[] = installedApps.flatMap((installed) => {
+      const catalogApp = this.catalog.find((item) => item.manifest.appId === installed.appId);
+      if (!catalogApp || catalogApp.latestVersion === installed.version) {
+        return [];
+      }
+
+      return [
+        {
+          appId: installed.appId,
+          currentVersion: installed.version,
+          nextVersion: catalogApp.latestVersion,
+          sourceKind: catalogApp.sourceKind,
+          artifact: catalogApp.releaseArtifact,
+        },
+      ];
+    });
+
+    return {
+      checkedAt: nowIso(),
+      availableUpdates,
+      downloadedUpdates: existingState.downloadedUpdates ?? [],
+      controlPlane: this.controlPlane.getStatus(),
+    };
+  }
+
+  private storeDownloadedUpdate(downloadedUpdate: DownloadedUpdateArtifact): UpdateState {
+    const updateState = this.createUpdateState();
+    const downloadedUpdates = [
+      ...(updateState.downloadedUpdates ?? []).filter(
+        (item) => !(item.appId === downloadedUpdate.appId && item.version === downloadedUpdate.version),
+      ),
+      downloadedUpdate,
+    ];
+    const nextUpdateState = {
+      ...updateState,
+      downloadedUpdates,
+    };
+    this.store.writeUpdateState(nextUpdateState);
+    return nextUpdateState;
+  }
+
+  private findDownloadedUpdate(updateState: UpdateState, update: UpdateCandidate) {
+    return updateState.downloadedUpdates?.find(
+      (item) =>
+        item.appId === update.appId &&
+        item.version === update.nextVersion &&
+        item.verified &&
+        (!update.artifact || item.sha256 === update.artifact.sha256),
+    );
   }
 
   private listProjections(): DesktopAppProjection[] {
@@ -834,7 +1000,7 @@ export class PlatformService {
       return this.getBillingState();
     }
     if (capability === 'lime.appUpdates') {
-      return this.checkUpdates();
+      return this.createUpdateState();
     }
     if (capability === 'lime.diagnostics') {
       return this.getDiagnostics();
@@ -843,7 +1009,7 @@ export class PlatformService {
   }
 
   private persistProjection(appId: string): DesktopAppProjection {
-    const projection = this.getProjection(appId);
+    const projection = this.createProjection(this.requireCatalogApp(appId));
     const projections = this.store.readProjections();
     const nextProjections = projections.some((item) => item.appId === appId)
       ? projections.map((item) => (item.appId === appId ? projection : item))
@@ -872,7 +1038,7 @@ export class PlatformService {
       ),
     );
 
-    const projection = this.getProjection(appId);
+    const projection = this.createProjection(this.requireCatalogApp(appId));
     this.updateInstalledStatus(appId, stateToLifecycleState(projection.readiness.state));
   }
 

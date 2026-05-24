@@ -85,6 +85,16 @@ repo: lime-desktop-platform
 6. 重新生成 projection，状态回到 `needs-setup`。
 7. 第一阶段默认 `keepData: true`，业务数据安全删除必须另走显式确认流程。
 
+### 3.8 limecore catalog 与更新
+
+1. 平台启动或检查更新时，通过 `LIMECORE_CATALOG_URL` 或 `LIMECORE_BASE_URL` 拉取 catalog。
+2. 未配置或同步失败时，回退到 `samples/*`，并在 diagnostics 的 `controlPlane` 中标记来源和错误。
+3. catalog 中的 `latestVersion` 高于本地安装记录时生成 `UpdateCandidate`。
+4. 有 `releaseArtifact` 时，下载到 `.lime-desktop/app-artifacts/{appId}/{version}/`。
+5. 下载后必须校验 `sha256`，可选校验 `sizeBytes`。
+6. 只有已校验 artifact 才能应用更新；缺 artifact 或 hash 不匹配返回 `blocked`。
+7. sample fallback 只能做开发态 projection，不能伪装成真实 release 下载成功。
+
 ## 4. 约束
 
 - 宿主不能偷偷改写业务数据。

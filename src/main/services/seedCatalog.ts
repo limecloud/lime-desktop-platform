@@ -10,6 +10,7 @@ interface DevCatalogMetadata {
   latestVersion?: string;
   updatedAt?: string;
   releaseNotes?: string[];
+  releaseArtifact?: CatalogApp['releaseArtifact'];
   frameworkHighlights?: CatalogApp['frameworkHighlights'];
   devRuntime?: CatalogApp['devRuntime'];
 }
@@ -50,6 +51,7 @@ function createCatalogApp(manifest: DesktopAppManifest, metadata: DevCatalogMeta
     latestVersion: metadata.latestVersion ?? manifest.version,
     updatedAt: metadata.updatedAt ?? '2026-05-23T00:00:00.000Z',
     releaseNotes: metadata.releaseNotes ?? ['从 samples fixture 加载。'],
+    releaseArtifact: metadata.releaseArtifact,
     frameworkHighlights: metadata.frameworkHighlights,
     devRuntime: metadata.devRuntime,
   };
