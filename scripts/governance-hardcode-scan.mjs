@@ -16,6 +16,7 @@ const blockedPatterns = [
 ];
 const blockedRuntimeCatalogPatterns = [/zhongcao/i, /lime\.zhongcao/i, /content-studio/i, /oem-starter/i];
 const blockedProviderSdkContractPatterns = [/@anthropic-ai\/claude-agent-sdk/, /@mariozechner\/pi-ai/, /@mariozechner\/pi-coding-agent/];
+const deprecatedRendererModulePatterns = [/src\/renderer\/src\/platformModules\.tsx/, /from ['"]\.\/platformModules['"]/];
 const allowedExtensions = new Set(['.ts', '.tsx', '.js', '.mjs', '.json', '.md']);
 
 function collectFiles(root) {
@@ -112,11 +113,22 @@ const providerSdkContractViolations = collectFiles('packages/contracts').flatMap
   });
 });
 
+const deprecatedRendererModuleViolations = collectFiles('src/renderer').flatMap((filePath) => {
+  const content = readFileSync(filePath, 'utf8');
+  return deprecatedRendererModulePatterns.flatMap((pattern) => {
+    if (!pattern.test(content)) {
+      return [];
+    }
+    return [`${relative(projectRoot, filePath)} -> deprecated platformModules renderer path: ${pattern.source}`];
+  });
+});
+
 if (
   violations.length > 0 ||
   runtimeCatalogViolations.length > 0 ||
   externalProductReferenceViolations.length > 0 ||
-  providerSdkContractViolations.length > 0
+  providerSdkContractViolations.length > 0 ||
+  deprecatedRendererModuleViolations.length > 0
 ) {
   console.error('平台核心目录发现业务硬编码：');
   for (const violation of violations) {
@@ -131,8 +143,12 @@ if (
   for (const violation of providerSdkContractViolations) {
     console.error(`- ${violation}`);
   }
+  for (const violation of deprecatedRendererModuleViolations) {
+    console.error(`- ${violation}`);
+  }
   console.error('业务 App 样板只能作为 external-product-reference 文档参照；平台运行时 catalog 只能使用中性 conformance fixture。');
   console.error('Claude SDK / Pi SDK 只能进入 host-core backend adapter 或 sidecar，不能进入公开 contracts。');
+  console.error('公共 React UI modules 只能从 @limecloud/desktop-platform-react / packages/react 暴露，不能回流到 renderer 内部 platformModules。');
   process.exit(1);
 }
 

@@ -14,6 +14,8 @@
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
+      "@limecloud/desktop-platform-contracts": ["packages/contracts/src/index.ts"],
+      "@limecloud/desktop-platform-react": ["packages/react/src/index.tsx"],
       "@shared/*": ["src/shared/*"],
       "@main/*": ["src/main/*"],
       "@renderer/*": ["src/renderer/src/*"]

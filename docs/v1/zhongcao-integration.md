@@ -38,7 +38,7 @@ flowchart TB
   subgraph Platform[lime-desktop-platform packages]
     Contracts[contracts]
     HostCore[host-core]
-    UI[ui-modules]
+    UI[@limecloud/desktop-platform-react]
     Adapter[Electron / Tauri adapter]
   end
 
@@ -67,9 +67,10 @@ flowchart TB
 -> zhongcao main/preload 初始化平台 adapter
 -> adapter 初始化 host-core
 -> host-core 同步 limecore catalog、session、billing、OEM、release metadata
--> zhongcao renderer 接收 Host Snapshot 和 Capability SDK handles
+-> zhongcao renderer 接收 Host Snapshot、Capability SDK handles 和 @limecloud/desktop-platform-react 模块清单
 -> zhongcao 产品内应用中心扫描 agentapps/* package
 -> 按 agentapp 标准生成业务 Agent App projection / readiness
+-> zhongcao 平台模块页挂载 @limecloud/desktop-platform-react 的 PlatformModuleOutlet
 -> 业务页面通过 Capability SDK 调用 lime.modelSettings、lime.billing 等平台能力
 -> 需要设置、登录、充值或更新时发送 PlatformNavigationIntent
 ```
@@ -110,15 +111,16 @@ flowchart TB
 
 - `zhongcao` 可独立启动，不依赖平台 App 从应用中心拉起。
 - `ZHONGCAO_MANIFEST.installMode` 为 `standalone`。
-- 产品内应用中心从 `agentapps/*/APP.md` + `app.manifest.json` 展示种草日记相关 AI Agent App。
+- `zhongcao` 从 `agentapps/*/APP.md` + `app.manifest.json` 读取种草日记相关 AI Agent App，并把左侧“Agent 应用中心”直接挂载到 `@limecloud/desktop-platform-react` 的 `PlatformModuleOutlet(moduleKey="app-center")`。
+- 平台模块页同样实际挂载 `@limecloud/desktop-platform-react` 的 `PlatformModuleOutlet`；平台应用中心、公共设置、运行和 Host Bridge 页面来自平台包。Product App 只实现 bootstrap adapter、action handler 和独立运行时的本地投影状态更新。
 - ready / needs-setup / blocked 能根据 Host Snapshot、模型设置、会话和 billing 投影正确区分。
 - 业务页面不实现 OAuth、模型设置、billing、OEM 或更新设置页，只发送 `PlatformNavigationIntent`。
 - 未连接 host-core / adapter 时显示 `dev-projection` 或 `blocked`，不伪造成功。
-- 后续接入平台包时优先通过公开 contracts 和 adapter，不直接访问平台内部 service。
+- 接入平台包时优先通过公开 contracts、`@limecloud/desktop-platform-react` 和 adapter，不直接访问平台内部 service 或 renderer 内部文件。
 
 ## 7. 治理分类
 
-- `current`：`zhongcao` 独立 Product App、产品内 agentapp package directory、平台公开 contracts / host-core / UI modules / adapter。
+- `current`：`zhongcao` 独立 Product App、产品内 agentapp package directory、平台公开 contracts、`@limecloud/desktop-platform-react`、host-core / adapter。
 - `compat`：`agentapps/catalog.json` fallback、开发态 Host Snapshot fallback。
 - `deprecated`：把真实产品名样板放在平台仓库 `samples/*` 并进入运行时 catalog。
 - `dead`：平台 App 内置 `lime.zhongcao` 同名 App，或生产路径由平台应用中心托管启动 `zhongcao` 子进程。

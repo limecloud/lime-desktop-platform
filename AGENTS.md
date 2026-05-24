@@ -37,7 +37,9 @@
 - `agentapp` 是标准事实源，`lime-desktop-platform` 是标准桌面宿主实现之一。
 - `limecore` 是云端控制面事实源，负责租户、OAuth、应用目录、发布元数据、OEM 和 billing。
 - `lime-desktop-platform` 负责本地宿主、应用中心、模型设置、OAuth 投影、OEM 投影、billing 投影、更新投影和 Host Bridge。
-- 业务 App 只消费平台能力，不在本仓库实现业务工作流。
+- 平台公共 UI 事实源必须在 `packages/react/src/**` 和 `@limecloud/desktop-platform-react`：平台能力总览、平台应用中心、云端会话、通用设置、账号设置、模型设置、品牌、充值、更新、运行和 Host Bridge 诊断都在这里实现。`packages/react/src/index.tsx` 只负责公共导出、装配和轻量组件，新增大型设置页必须拆到相邻子目录，避免继续膨胀单文件。
+- 业务 App 只消费平台能力，不在本仓库实现业务工作流；业务 App 也不得复制平台公共 UI，只能挂载平台 React 组件、传入 Host Snapshot / bootstrap 投影和 `PlatformNavigationIntent` handler。
+- 如果 `zhongcao`、`content-studio` 或 OEM App 需要通用设置、账号、OAuth、充值、模型设置等公共页面，先在本仓库平台 React 包实现，再由业务 App 调用渲染。
 - Electron first，但 manifest、projection、readiness、Host Bridge 和 Capability SDK 语义必须能迁移到 Tauri + React + Rust。
 
 ## 模块职责
@@ -48,7 +50,8 @@
 4. `src/main/services/platformService.ts` 负责平台编排、projection、readiness、snapshot 和 capability invoke。
 5. `src/main/services/seedCatalog.ts` 只放开发态目录样本，真实目录后续来自 `limecore`。
 6. `src/preload/index.ts` 暴露 `window.limeDesktop`，renderer 不直接访问主进程实现。
-7. `src/renderer/src/App.tsx` 只做平台壳层、应用中心、设置中心、运行页和诊断页，不写业务 App 内部流程。
+7. `packages/react/src/**` 是公共 React UI modules 的事实源，Product App 通过 `@limecloud/desktop-platform-react` 消费；大型页面按能力拆分到子目录，`index.tsx` 保持装配入口。
+8. `src/renderer/src/App.tsx` 只做 reference shell、状态和 action handler 装配，不写业务 App 内部流程。
 
 ## 存储规则
 

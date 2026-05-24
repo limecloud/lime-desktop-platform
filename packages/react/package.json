@@ -1,7 +1,7 @@
 {
-  "name": "@limecloud/desktop-platform-contracts",
+  "name": "@limecloud/desktop-platform-react",
   "version": "0.1.4",
-  "description": "Lime Desktop Platform manifest、projection、readiness、Host Bridge 和 IPC 契约。",
+  "description": "Lime Desktop Platform 公共 React UI modules。",
   "type": "module",
   "license": "Apache-2.0",
   "main": "dist/index.js",
@@ -20,7 +20,14 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
+  "dependencies": {
+    "@limecloud/desktop-platform-contracts": "0.1.4"
+  },
+  "peerDependencies": {
+    "react": ">=19.0.0"
+  },
   "devDependencies": {
+    "@types/react": "^19.2.7",
     "typescript": "^5.9.3"
   }
 }

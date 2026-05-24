@@ -86,7 +86,7 @@ Lime 组织已经进入多桌面 App 并行阶段，`content-studio`、`zhongcao
 | `lime-desktop-platform` | 本地宿主、`agentapp` 标准应用中心、projection、readiness、Host Bridge、Capability SDK adapter、模型设置、OEM 壳层、会话、桥接、平台配置 | Agent App 标准本身和业务工作流本身 |
 | 业务 App | 领域流程、页面、素材、知识、内容和专用交互 | 统一登录、模型、计费、宿主协议 |
 
-公共能力只在平台层实现。业务 App 可以有自己的产品内 Agent App 应用中心，但模型设置、OAuth、充值 / 订阅、OEM、更新、平台级应用中心和安装表只能由 `lime-desktop-platform` 或同协议宿主提供，业务 App 通过 Host Snapshot、Capability SDK 和 `PlatformNavigationIntent` 消费。公共页面也同样只由平台提供：现阶段代码事实源是 `src/renderer/src/platformModules.tsx`，reference shell 只装配它；后续应拆成 `@limecloud/desktop-platform-react` 或同等 workspace package。
+公共能力只在平台层实现。业务 App 可以有自己的产品内 Agent App 应用中心，但模型设置、OAuth、充值 / 订阅、OEM、更新、平台级应用中心和安装表只能由 `lime-desktop-platform` 或同协议宿主提供，业务 App 通过 Host Snapshot、Capability SDK 和 `PlatformNavigationIntent` 消费。公共页面也同样只由平台提供：代码事实源是 `packages/react/src/index.tsx`，发布包是 `@limecloud/desktop-platform-react`，reference shell 只装配这个包。
 
 ### 4.4 公共 UI Modules 范围
 

@@ -39,7 +39,12 @@ repo: lime-desktop-platform
 ### 2.3 平台门槛
 
 - [x] 应用中心可用
+- [x] 应用中心 UI 已按 Lime 卡片网格 / 详情弹窗形态迁移到平台 React 包，底层仍走平台 contracts / action handlers
 - [x] 模型设置可用
+- [x] 语音模型设置 UI 可用
+- [x] 搜索服务设置 UI 可用
+- [x] 网络设置 UI 可用
+- [x] 关于设置 UI 可用
 - [x] OAuth / 会话可用
 - [x] OEM / 品牌可用
 - [x] 充值 / 订阅可用
@@ -54,6 +59,11 @@ repo: lime-desktop-platform
 - [x] `content-studio`、`zhongcao` 可作为独立 Product App 消费者接入文档边界
 - [x] `samples/platform-conformance` 可作为中性 reference fixture 验证平台协议
 - [x] 业务 App 不需要重复实现登录、模型和计费
+- [x] `zhongcao` 已通过 `@limecloud/desktop-platform-react` 挂载 `PlatformModuleOutlet`，平台应用中心、公共设置、运行和 Host Bridge UI 由平台包提供
+- [x] 业务 App 不需要重复实现语音模型设置 UI；真实 ASR 能力后续由平台 host-core action handler 承接
+- [x] 业务 App 不需要重复实现搜索服务设置 UI；真实 WebSearch provider 凭证和路由后续由平台 host-core action handler 承接
+- [x] 业务 App 不需要重复实现网络代理设置 UI；真实系统代理检测、代理保存和 AI 子进程环境变量注入后续由平台 host-core settings / network action handler 承接
+- [x] 业务 App 不需要重复实现关于页 UI；真实更新检查、更新日志和打开日志目录后续由平台 updater / diagnostics action handler 承接
 - [ ] Tauri 适配可以共用同一协议
 
 ## 3. 必须阻断的风险

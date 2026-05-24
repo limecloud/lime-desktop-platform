@@ -1,13 +1,14 @@
 {
   "name": "lime-desktop-platform",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Lime 桌面平台底座，用于承接 Agent App 宿主、应用中心、模型设置、OAuth、OEM 和充值。",
   "type": "module",
   "main": "out/main/index.js",
   "license": "Apache-2.0",
   "author": "Lime Cloud",
   "workspaces": [
-    "packages/contracts"
+    "packages/contracts",
+    "packages/react"
   ],
   "engines": {
     "node": ">=20.0.0"
@@ -21,9 +22,13 @@
     "governance:hardcode-scan": "node scripts/governance-hardcode-scan.mjs",
     "typecheck": "tsc --noEmit",
     "pack:contracts": "mkdir -p dist && npm pack --workspace @limecloud/desktop-platform-contracts --pack-destination dist",
+    "pack:react": "mkdir -p dist && npm pack --workspace @limecloud/desktop-platform-react --pack-destination dist",
+    "build:packages": "npm run build --workspace @limecloud/desktop-platform-contracts && npm run build --workspace @limecloud/desktop-platform-react",
     "verify:local": "npm run typecheck && npm run build && npm run smoke:electron"
   },
   "dependencies": {
+    "@limecloud/desktop-platform-contracts": "0.1.4",
+    "@limecloud/desktop-platform-react": "0.1.4",
     "react": "^19.2.3",
     "react-dom": "^19.2.3"
   },

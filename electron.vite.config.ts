@@ -24,6 +24,8 @@ export default defineConfig({
     plugins: [react()],
     resolve: {
       alias: {
+        '@limecloud/desktop-platform-contracts': resolve(__dirname, 'packages/contracts/src/index.ts'),
+        '@limecloud/desktop-platform-react': resolve(__dirname, 'packages/react/src/index.tsx'),
         '@renderer': resolve(__dirname, 'src/renderer/src'),
         '@shared': resolve(__dirname, 'src/shared'),
       },

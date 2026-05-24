@@ -10,12 +10,16 @@ import type {
   PlatformSettings,
 } from '../../shared/types';
 import {
+  getAccountProjectionFromBootstrap,
+  getModelSettingsProjectionFromBootstrap,
   PlatformModuleOutlet,
+  PlatformSettingsDialog,
   platformModuleLabels,
   platformModules,
   type PlatformModuleActionHandlers,
   type PlatformModuleKey,
-} from './platformModules';
+  type PlatformSettingsPageKey,
+} from '@limecloud/desktop-platform-react';
 
 interface ToastState {
   kind: 'info' | 'warning' | 'error';
@@ -43,6 +47,8 @@ export function App(): ReactElement {
   const [toast, setToast] = useState<ToastState>();
   const [loginTenant, setLoginTenant] = useState('Lime 内部租户');
   const [loginEmail, setLoginEmail] = useState('dev@limecloud.local');
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsPage, setSettingsPage] = useState<PlatformSettingsPageKey>('general');
 
   async function refresh(nextToast?: ToastState): Promise<PlatformBootstrap> {
     const nextBootstrap = await window.limeDesktop.platform.getBootstrap();
@@ -175,18 +181,30 @@ export function App(): ReactElement {
             <span>{bootstrap.oemProjection.brandName} / {bootstrap.oemProjection.channel}</span>
           </div>
         </div>
-        <div className="topbar-status">
-          <StatusPill
-            label="会话"
-            value={bootstrap.authSession.state === 'authenticated' ? '已登录' : '未登录'}
-            tone={bootstrap.authSession.state === 'authenticated' ? 'good' : 'warn'}
-          />
-          <StatusPill
-            label="账单"
-            value={billingLabel(bootstrap.billingState.state)}
-            tone={bootstrap.billingState.state === 'active' ? 'good' : 'warn'}
-          />
-          <StatusPill label="宿主" value={bootstrap.hostProfile.hostKind} />
+        <div className="topbar-actions">
+          <div className="topbar-status">
+            <StatusPill
+              label="会话"
+              value={bootstrap.authSession.state === 'authenticated' ? '已登录' : '未登录'}
+              tone={bootstrap.authSession.state === 'authenticated' ? 'good' : 'warn'}
+            />
+            <StatusPill
+              label="账单"
+              value={billingLabel(bootstrap.billingState.state)}
+              tone={bootstrap.billingState.state === 'active' ? 'good' : 'warn'}
+            />
+            <StatusPill label="宿主" value={bootstrap.hostProfile.hostKind} />
+          </div>
+          <button
+            className="settings-trigger"
+            type="button"
+            onClick={() => {
+              setSettingsPage('general');
+              setSettingsOpen(true);
+            }}
+          >
+            设置
+          </button>
         </div>
       </header>
 
@@ -240,6 +258,21 @@ export function App(): ReactElement {
         <span>已安装 {bootstrap.installedApps.length}</span>
         <span>事件 {bootstrap.diagnostics.counts.runtimeEvents}</span>
       </footer>
+      {settingsOpen ? (
+        <PlatformSettingsDialog
+          about={{
+            productName: bootstrap.oemProjection.productName,
+            version: bootstrap.hostProfile.hostVersion,
+            copyright: '© 2026 Lime Cloud. All rights reserved.',
+          }}
+          account={getAccountProjectionFromBootstrap(bootstrap)}
+          activePage={settingsPage}
+          modelSettings={getModelSettingsProjectionFromBootstrap(bootstrap)}
+          onClose={() => setSettingsOpen(false)}
+          onOpenPlatformIntent={(intent) => actions.openPlatformIntent?.(intent)}
+          onSelectPage={setSettingsPage}
+        />
+      ) : null}
     </main>
   );
 }

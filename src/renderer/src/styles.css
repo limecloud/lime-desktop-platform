@@ -96,6 +96,7 @@ button:disabled {
   font-size: 12px;
 }
 
+.topbar-actions,
 .topbar-status,
 .button-row,
 .detail-actions,
@@ -104,6 +105,22 @@ button:disabled {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.topbar-actions {
+  justify-content: flex-end;
+}
+
+.settings-trigger {
+  border: 1px solid #d6dce5;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #475569;
+  padding: 7px 12px;
+}
+
+.settings-trigger:hover {
+  background: #eef2f7;
 }
 
 .shell-body {

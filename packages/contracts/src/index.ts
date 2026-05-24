@@ -129,6 +129,8 @@ export interface HostSnapshot {
   workspacePath?: string;
   modelSettingsVersion?: string;
   oauthState?: OAuthState;
+  tenantName?: string;
+  accountEmail?: string;
   billingState?: BillingState;
   oemState?: OEMState;
 }
@@ -313,14 +315,83 @@ export interface UpdateState {
   controlPlane?: ControlPlaneStatus;
 }
 
+export interface RuntimeEvent {
+  id: string;
+  timestamp: string;
+  level: 'info' | 'warning' | 'error';
+  appId?: string;
+  entryKey?: string;
+  message: string;
+  payload?: unknown;
+}
+
+export interface DiagnosticSnapshot {
+  storage: {
+    workspaceRoot: string;
+    workspaceStateDir: string;
+    userStateDir: string;
+  };
+  counts: {
+    catalogApps: number;
+    installedApps: number;
+    projections: number;
+    runtimeEvents: number;
+  };
+  hostProfile: HostProfile;
+  controlPlane: ControlPlaneStatus;
+  lastEvents: RuntimeEvent[];
+}
+
+export interface PlatformBootstrap {
+  hostProfile: HostProfile;
+  catalog: CatalogApp[];
+  installedApps: InstalledAppRecord[];
+  projections: DesktopAppProjection[];
+  modelSettings: ModelSettings;
+  authSession: CloudSessionSnapshot;
+  billingState: BillingSnapshot;
+  oemProjection: OEMProjection;
+  platformSettings: PlatformSettings;
+  updateState: UpdateState;
+  diagnostics: DiagnosticSnapshot;
+  runtimeEvents: RuntimeEvent[];
+}
+
+export interface UpdateActionResult {
+  ok: boolean;
+  state: 'idle' | 'blocked' | 'downloaded' | 'applied';
+  message: string;
+  updateState: UpdateState;
+  event: RuntimeEvent;
+}
+
 export interface LaunchEntryInput {
   appId: string;
   entryKey: string;
 }
 
+export interface LaunchEntryResult {
+  launched: boolean;
+  appId: string;
+  entryKey: string;
+  readiness: ReadinessResult;
+  snapshot?: HostSnapshot;
+  bridgeMessage?: HostBridgeMessage<HostSnapshot>;
+  runtimeEvents: RuntimeEvent[];
+}
+
 export interface UninstallAppInput {
   appId: string;
   keepData?: boolean;
+}
+
+export interface UninstallAppResult {
+  ok: boolean;
+  appId: string;
+  status: 'removed' | 'uninstalling' | 'blocked';
+  message: string;
+  projectedApp?: DesktopAppProjection;
+  runtimeEvents: RuntimeEvent[];
 }
 
 export interface CapabilityInvokeInput {
@@ -329,6 +400,17 @@ export interface CapabilityInvokeInput {
   capability: PlatformCapability;
   operation: string;
   input?: unknown;
+}
+
+export interface CapabilityInvokeResult {
+  ok: boolean;
+  requestId: string;
+  output?: unknown;
+  error?: {
+    code: string;
+    message: string;
+  };
+  event: RuntimeEvent;
 }
 
 export type AgentExecutionBackendKind = 'blocked' | 'generic-text' | 'claude-sdk' | 'pi-sidecar';
@@ -410,7 +492,7 @@ export interface PlatformNavigationResult {
   ok: boolean;
   target: PlatformNavigationTarget;
   message: string;
-  event: unknown;
+  event: RuntimeEvent;
 }
 
 export type PlatformChangeReason =
@@ -431,22 +513,56 @@ export interface PlatformChangeEvent {
   appId?: string;
   entryKey?: string;
   timestamp: string;
-  bootstrap: unknown;
+  bootstrap: PlatformBootstrap;
 }
 
 export interface LimeDesktopHostApi {
   platform: {
-    getBootstrap: () => Promise<unknown>;
+    getBootstrap: () => Promise<PlatformBootstrap>;
     onChanged: (listener: (event: PlatformChangeEvent) => void) => () => void;
   };
   apps: {
+    listCatalog: () => Promise<CatalogApp[]>;
+    listInstalled: () => Promise<InstalledAppRecord[]>;
     getProjection: (appId: string) => Promise<DesktopAppProjection>;
     getReadiness: (appId: string) => Promise<ReadinessResult>;
-    launchEntry: (input: LaunchEntryInput) => Promise<unknown>;
-    uninstall: (input: UninstallAppInput) => Promise<unknown>;
-    invokeCapability: (input: CapabilityInvokeInput) => Promise<unknown>;
+    install: (appId: string) => Promise<DesktopAppProjection>;
+    update: (appId: string) => Promise<DesktopAppProjection>;
+    enable: (appId: string) => Promise<DesktopAppProjection>;
+    disable: (appId: string) => Promise<DesktopAppProjection>;
+    launchEntry: (input: LaunchEntryInput) => Promise<LaunchEntryResult>;
+    uninstall: (input: UninstallAppInput) => Promise<UninstallAppResult>;
+    invokeCapability: (input: CapabilityInvokeInput) => Promise<CapabilityInvokeResult>;
     getRuntimeSnapshot: (input: LaunchEntryInput) => Promise<HostSnapshot | undefined>;
   };
+  settings: {
+    getModel: () => Promise<ModelSettings>;
+    saveModel: (settings: ModelSettings) => Promise<ModelSettings>;
+    getPlatform: () => Promise<PlatformSettings>;
+    savePlatform: (settings: PlatformSettings) => Promise<PlatformSettings>;
+  };
+  auth: {
+    getSession: () => Promise<CloudSessionSnapshot>;
+    login: (input: LoginInput) => Promise<CloudSessionSnapshot>;
+    logout: () => Promise<CloudSessionSnapshot>;
+  };
+  billing: {
+    getState: () => Promise<BillingSnapshot>;
+    refresh: () => Promise<BillingSnapshot>;
+  };
+  oem: {
+    getProjection: () => Promise<OEMProjection>;
+  };
+  updates: {
+    check: () => Promise<UpdateState>;
+    download: (appId: string) => Promise<UpdateActionResult>;
+    apply: (appId: string) => Promise<UpdateActionResult>;
+  };
+}
+
+export interface LoginInput {
+  tenantName: string;
+  accountEmail: string;
 }
 
 export const LIME_AGENT_APP_BRIDGE_PROTOCOL = 'lime.agentApp.bridge';

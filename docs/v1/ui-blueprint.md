@@ -84,9 +84,11 @@ repo: lime-desktop-platform
 
 实现事实源：
 
-- 现阶段代码事实源：`src/renderer/src/platformModules.tsx`
+- 代码事实源：`packages/react/src/index.tsx`。
+- 发布包：`@limecloud/desktop-platform-react`。
 - reference shell：`src/renderer/src/App.tsx` 只负责 shell、状态和 action handler 装配。
-- 后续包形态：拆为 `@limecloud/desktop-platform-react` 或同等 workspace package，供 Product App 直接依赖。
+- Product App 直接依赖 `@limecloud/desktop-platform-react` 的模块清单、标签、`PlatformModuleOutlet` 和 action handler 类型，不复制公共页面。
+- 平台应用中心迁移 Lime 应用中心的产品形态：顶部统计、状态 / 来源筛选、卡片网格、分页、详情弹窗、常用入口、readiness、能力要求、框架能力、安装 / 打开 / 更新 / 启停 / 卸载动作。迁移只复用 UI 结构和交互模型，底层数据与动作继续由 `PlatformBootstrap`、`DesktopAppProjection` 和 `PlatformModuleActionHandlers` 驱动，不搬 Lime Tauri 私有命令。
 
 ### 2.4 运行页
 
@@ -184,6 +186,27 @@ repo: lime-desktop-platform
 - 可查看 manifest 原文、projection 结果、readiness 计算和 bridge 事件。
 - 适合做接入样板和问题定位。
 - 不向普通用户默认暴露。
+
+### 7.5 设置弹窗
+
+- 设置弹窗是 reference shell 的桌面壳层能力，采用居中模态、左侧分类导航和右侧详情页。
+- `@limecloud/desktop-platform-react` 导出 `PlatformAccountEntry` 和 `PlatformSettingsDialog`，用于 Product App 左下角账号入口、通用设置页、模型设置页和账号设置页；Product App 只调用渲染，不复制公共设置 UI。
+- 左侧设置分类必须完整可进入：通用、个性化、主题、每日回顾、模型、使用统计、语音模型、开放网关、机器人对话、搜索服务、网络、数据、账号和关于。当前未接真实保存的分类展示平台投影页，不在 Product App 内做私有设置事实源。
+- 主题页复刻桌面参考设置结构：包含外观模式、颜色主题、对话字体大小和衬线体开关；当前先由平台 React 包维护 UI 草稿状态，后续由 host-core settings action handler 统一保存。
+- 模型页复刻桌面参考设置结构：左侧为“启用的模型”二级列表，默认包含“默认 (Claude)”和 “DeepSeek”；右侧为当前 provider 配置卡，包含 API 密钥输入、模型优先级、添加模型、上移 / 下移 / 移除模型和测试连接。
+- “添加模型”不是详情页下方的常驻目录。点击左侧 `+` 或“添加模型”后，右侧切换为独立供应商选择视图，包含推荐服务、国内服务、聚合平台、海外平台和本地模型 tabs；选择任一供应商后回到同一套 provider 配置卡。
+- 模型 provider 图标来自 Lime 现有 `src/icons/providers` 图标体系并内联到平台 React 包；没有明确图标映射的 provider 不在 v1 设置弹窗里展示，避免用文字或占位符伪造品牌图标。
+- 语音模型页由平台 React 包完整承载，不再使用投影占位页。页面复刻 Lime 参考结构：语音输入快捷键、Fn / 快捷键切换、启用开关、Fn 键说明、SenseVoice Small 本地模型、安装状态、删除 / 安装模型、选择音频文件测试、选择视频文件测试、实时录音测试和所有转录历史。
+- 语音模型页当前只维护 UI 草稿状态，真实快捷键注册、模型下载 / 删除、文件选择、录音权限、SenseVoice / FunASR 转写和历史持久化必须由平台 host-core ASR action handler 接入。Product App 只能挂载该页面，不保存 ASR 模型、快捷键或转录历史事实源。
+- 搜索服务页由平台 React 包完整承载，不再使用投影占位页。页面复刻桌面参考结构：提示说明、已启用（拖拽排序优先级）分区、可用服务分区、Tavily、Bing Search、秘塔搜索、Exa、Brave Search、SerpAPI、Serper、Google CSE 和 Firecrawl 列表、启用开关、API Key 输入、获取 Key 入口，以及 Google CSE 的 `Custom Search Engine ID (cx)` 输入。
+- 搜索服务页当前只维护 UI 草稿状态，真实 API Key 加密保存、Google CSE CX、秘塔兼容端点、provider 健康检查、WebSearch 路由和失败自动回退必须由平台 host-core search action handler / Credential Broker 接入。Product App 只能挂载该页面，不保存搜索凭证、搜索优先级或 WebSearch 路由事实源。
+- 网络页由平台 React 包完整承载，不再使用投影占位页。页面复刻桌面参考结构：系统代理检测提示、代理服务器开关、HTTP/HTTPS 与 SOCKS5 协议选择、服务器地址、端口、代理认证、代理白名单、模型供应商自动白名单展开项、代理地址预览和 AI 模型请求作用域说明。
+- 网络页当前只维护 UI 草稿状态，真实系统代理检测、代理配置保存、`HTTP_PROXY` / `HTTPS_PROXY` 环境变量注入、Claude CLI 子进程代理隔离和证书 / 网关策略必须由平台 host-core settings / network action handler 接入。Product App 只能挂载该页面，不保存代理配置、不覆盖系统代理、不直接写 AI 子进程环境变量。
+- 账号页显示头像、昵称、邮箱、退出登录和完成按钮；账号事实源仍来自 Host Snapshot / `PlatformBootstrap.authSession` 投影。
+- 账号数据只读取 Host Session / `PlatformBootstrap.authSession` 投影，不保存 token，不复制 OAuth 权威状态。
+- 退出登录只调用平台 auth action handler，由宿主刷新 session 投影。
+- 关于页由平台 React 包完整承载，不再使用投影占位页。页面复刻桌面参考结构：品牌 / logo 预留位、版本号、自动检查更新开关、检查更新按钮、查看更新日志、打开日志目录和版权信息；Product App 只能传 `about` 投影或自定义 logo 节点，不复制关于页 UI。
+- 关于页当前只维护 UI 草稿状态，真实自动检查更新保存、Product App 更新检查、agentapp package 更新检查、更新日志和打开日志目录必须由平台 updater / diagnostics action handler 接入。
 
 ## 8. 视觉原则补充
 

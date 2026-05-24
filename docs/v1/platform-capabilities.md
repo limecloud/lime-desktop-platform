@@ -34,6 +34,8 @@ Claude SDK / Pi / MCP 运行时策略已完成文档分析，`AgentExecutionServ
 
 公共能力的实现边界必须固定在宿主侧：模型设置、OAuth / 会话、OEM / 品牌、充值 / 订阅、更新 / 分发和平台级应用中心由 `lime-desktop-platform` 实现并通过 Host Snapshot、Capability SDK 或 `PlatformNavigationIntent` 暴露。`content-studio`、`zhongcao` 和后续 Product App 只能调用、展示和响应这些投影，不允许复制设置页、支付账本、OAuth token 管理或平台安装表。平台 App 运行时 catalog 只允许中性 `samples/platform-conformance` fixture，不允许内置真实 Product App 同名样板。
 
+公共 React UI 的事实源是 `@limecloud/desktop-platform-react`。Product App 如果需要平台能力总览、平台应用中心、云端会话、模型设置、品牌、充值、更新、运行、Host Bridge 或公共设置弹窗，必须挂载 `PlatformModuleOutlet` / `PlatformSettingsDialog` 并传入 bootstrap projection 与 action handler。Product App 允许把自己的产品内 `agentapps/*` package 转成平台组件所需的 `PlatformBootstrap` 投影，但不得复制平台 UI 或维护第二套平台安装表。
+
 ## 3. 共享与不共享
 
 ### 3.1 必须共享

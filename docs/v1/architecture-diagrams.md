@@ -83,7 +83,7 @@ flowchart TB
   TauriAdapter --> OEMApp
 ```
 
-说明：Product App 是平台能力的消费者，不是平台应用中心里的“子 App”。平台应用中心和产品内 agentapp 应用中心可以共存，但都必须回到 `agentapp` 标准和同一组平台能力契约。公共页面同样只有一套事实源，当前代码落在 `src/renderer/src/platformModules.tsx`，后续拆成 `@limecloud/desktop-platform-react` 或同等 UI package。
+说明：Product App 是平台能力的消费者，不是平台应用中心里的“子 App”。平台应用中心和产品内 agentapp 应用中心可以共存，但都必须回到 `agentapp` 标准和同一组平台能力契约。公共页面同样只有一套事实源：`packages/react/src/index.tsx` 和发布包 `@limecloud/desktop-platform-react`。
 
 ## 3. 包边界图
 
@@ -280,7 +280,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-  State[平台公共能力状态] --> Snapshot[生成 Host Snapshot]
+  State[平台公共能力状态] --> Snapshot[生成 Host Snapshot: host / workspace / oauthState / tenantName / accountEmail / model / billing / OEM]
   Snapshot --> Filter[剔除 token / secret / billing 原始账本 / 宿主内部对象]
   Filter --> Adapter[Electron preload 或 Tauri command adapter]
   Adapter --> AppUI[Product App 只读消费]

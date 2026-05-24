@@ -950,6 +950,7 @@ export class PlatformService {
 
   private createHostSnapshot(input: LaunchEntryInput): HostSnapshot {
     const hostProfile = this.getHostProfile();
+    const authSession = this.getAuthSession();
     return {
       hostKind: hostProfile.hostKind,
       hostVersion: hostProfile.hostVersion,
@@ -959,7 +960,9 @@ export class PlatformService {
       theme: hostProfile.theme,
       workspacePath: hostProfile.workspacePath,
       modelSettingsVersion: this.getModelSettings().version,
-      oauthState: this.getAuthSession().state,
+      oauthState: authSession.state,
+      tenantName: authSession.tenantName,
+      accountEmail: authSession.accountEmail,
       billingState: this.getBillingState().state,
       oemState: this.getOEMProjection().state,
     };

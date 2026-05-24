@@ -1,5 +1,21 @@
 # Release Notes
 
+## 0.1.4
+
+### 已补强
+
+- 新增 `@limecloud/desktop-platform-react` workspace 包，公共平台 React UI modules 的代码事实源迁移到 `packages/react/src/index.tsx`。
+- reference shell 改为消费 `@limecloud/desktop-platform-react`，`src/renderer/src/App.tsx` 只负责 bootstrap、状态和 action handler 装配。
+- `@limecloud/desktop-platform-contracts` 补齐 `PlatformBootstrap`、`LaunchEntryResult`、`RuntimeEvent`、`UpdateActionResult`、`CapabilityInvokeResult` 等公共 UI 必需契约。
+- `governance:hardcode-scan` 增加 renderer 内部 `platformModules` 回流扫描，阻止公共 UI modules 再回到 reference shell 内部。
+- `zhongcao` 接入方式更新为消费 `@limecloud/desktop-platform-react` 的模块清单、标签和类型，不再维护独立平台模块清单。
+- reference shell 增加设置弹窗和账号页，复刻桌面端左侧设置导航、头像、昵称、邮箱、退出登录和完成按钮布局；账号数据只读取 `PlatformBootstrap.authSession` 投影。
+
+### 仍未完成
+
+- 将 `host-core`、Electron adapter 和 Tauri adapter 拆成正式 workspace package。
+- 将 Product App 运行时 action handlers 从示例式注入升级为稳定 SDK。
+
 ## 0.1.3
 
 ### 已补强

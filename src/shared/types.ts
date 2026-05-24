@@ -130,6 +130,8 @@ export interface HostSnapshot {
   workspacePath?: string;
   modelSettingsVersion?: string;
   oauthState?: OAuthState;
+  tenantName?: string;
+  accountEmail?: string;
   billingState?: BillingState;
   oemState?: OEMState;
 }
