@@ -1,0 +1,40 @@
+:root {
+  --vp-c-brand-1: #176c5f;
+  --vp-c-brand-2: #228575;
+  --vp-c-brand-3: #3aa391;
+  --vp-c-brand-soft: rgba(23, 108, 95, 0.14);
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(135deg, #123f39 0%, #176c5f 52%, #2b78d0 100%);
+}
+
+.vp-doc table {
+  display: table;
+  width: 100%;
+}
+
+.vp-doc .language-text pre {
+  white-space: pre-wrap;
+}
+
+.vp-doc .language-mermaid {
+  margin: 1.5rem 0;
+  overflow-x: auto;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  padding: 1rem;
+  background: linear-gradient(135deg, rgba(23, 108, 95, 0.08), rgba(43, 120, 208, 0.06));
+}
+
+.vp-doc .language-mermaid pre {
+  margin: 0;
+  white-space: pre-wrap;
+  background: transparent;
+  color: var(--vp-c-text-1);
+}
+
+.vp-doc .language-mermaid svg {
+  display: block;
+  min-width: 680px;
+  max-width: 100%;
+  height: auto;
+}

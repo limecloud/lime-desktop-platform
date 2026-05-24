@@ -2,7 +2,7 @@
   "appId": "lime.zhongcao",
   "displayName": "种草日记",
   "version": "0.1.0",
-  "installMode": "runtime_backed",
+  "installMode": "standalone",
   "entries": [
     {
       "key": "diary-workbench",

@@ -535,9 +535,117 @@ h3 {
 
 .settings-layout,
 .runtime-layout,
-.debug-layout {
+.debug-layout,
+.module-layout {
   display: grid;
   gap: 14px;
+}
+
+.module-head {
+  margin-bottom: 0;
+}
+
+.module-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.metric-card {
+  display: grid;
+  gap: 7px;
+  border: 1px solid #d9e0ea;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.metric-card span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.metric-card strong {
+  color: #18202f;
+  font-size: 22px;
+}
+
+.platform-module-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.platform-module-card {
+  display: grid;
+  gap: 10px;
+  min-height: 210px;
+  border: 1px solid #d9e0ea;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.platform-module-card h2 {
+  font-size: 15px;
+}
+
+.platform-module-card p {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: auto;
+}
+
+.boundary-list,
+.update-list {
+  display: grid;
+  gap: 8px;
+}
+
+.boundary-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  border: 1px solid #e5eaf1;
+  border-radius: 7px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.boundary-row strong {
+  color: #166534;
+}
+
+.boundary-row span {
+  color: #475569;
+  line-height: 1.5;
+}
+
+.update-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid #e5eaf1;
+  border-radius: 7px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.update-row span {
+  display: block;
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
 }
 
 .tabs {
@@ -691,5 +799,9 @@ select {
 
   .detail-panel {
     min-height: auto;
+  }
+
+  .platform-module-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

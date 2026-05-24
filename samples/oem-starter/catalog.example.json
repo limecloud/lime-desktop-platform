@@ -1,4 +1,5 @@
 {
+  "catalogScope": "external-product-reference",
   "sourceKind": "oem",
   "description": "最小 OEM 应用样板，用于验证品牌投影、更新投影和诊断能力。",
   "categories": ["OEM", "样板"],

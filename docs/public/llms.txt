@@ -1,0 +1,8 @@
+# Lime Desktop Platform
+
+Lime Desktop Platform is the desktop host implementation for the Agent App standard.
+
+- Agent App standard source: https://github.com/limecloud/agentapp
+- Platform docs: /zh/
+- Architecture: /v1/architecture-diagrams
+- Platform capabilities: /v1/platform-capabilities

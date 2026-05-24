@@ -1,4 +1,5 @@
 {
+  "catalogScope": "external-product-reference",
   "sourceKind": "cloud",
   "description": "内容工厂接入样板，复用平台 OAuth、模型设置、品牌和诊断能力。",
   "categories": ["内容生产", "Agent App"],

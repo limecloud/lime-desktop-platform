@@ -1,0 +1,39 @@
+{
+  "appId": "lime.platform.conformance",
+  "displayName": "平台一致性 Fixture",
+  "version": "0.1.0",
+  "installMode": "runtime_backed",
+  "entries": [
+    {
+      "key": "host-conformance",
+      "kind": "diagnostics",
+      "label": "宿主一致性",
+      "route": "/conformance"
+    },
+    {
+      "key": "capability-check",
+      "kind": "workflow",
+      "label": "能力裁决",
+      "route": "/capabilities"
+    },
+    {
+      "key": "settings-intent",
+      "kind": "settings",
+      "label": "设置意图",
+      "route": "/settings-intent"
+    }
+  ],
+  "requires": {
+    "sdkVersion": "1.0.0",
+    "capabilities": [
+      "lime.cloudSession",
+      "lime.modelSettings",
+      "lime.branding",
+      "lime.billing",
+      "lime.appUpdates",
+      "lime.diagnostics",
+      "lime.agentExecution"
+    ],
+    "hostKinds": ["electron", "tauri"]
+  }
+}

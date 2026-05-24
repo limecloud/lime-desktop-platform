@@ -62,11 +62,12 @@ repo: lime-desktop-platform
 - 充值 / 订阅
 - 更新 / 分发
 
-### 4.4 P3：首批 App 接入
+### 4.4 P3：首批 App 接入与 fixture
 
 - `content-studio`
 - `zhongcao`
 - 其他 OEM App
+- `samples/platform-conformance` 中性 reference fixture
 
 ### 4.5 P4：跨宿主适配
 
@@ -85,6 +86,6 @@ repo: lime-desktop-platform
 
 - 能明确说出谁是权威来源。
 - 能区分共享能力和业务能力。
-- 能用同一宿主协议接入第二个 App。
+- 能用同一宿主协议接入第二个 App，或通过 `samples/platform-conformance` fixture 证明复用路径。
 - 能在不改协议的前提下替换 Electron 实现。
 - 能把 blocked、needs-setup 和 ready 区分清楚。

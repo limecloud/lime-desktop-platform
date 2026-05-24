@@ -13,12 +13,41 @@ const WebSocketClient = globalThis.WebSocket ?? UndiciWebSocket;
 const projectRoot = resolve(new URL('..', import.meta.url).pathname);
 const mainEntry = join(projectRoot, 'out/main/index.js');
 const remoteDebuggingPort = 9733 + Math.floor(Math.random() * 400);
-const zhongcaoRemoteDebuggingPort = remoteDebuggingPort + 500;
 const userDataDir = mkdtempSync(join(tmpdir(), `lime-desktop-platform-smoke-${randomUUID()}-`));
 const headed = process.argv.slice(2).includes('--headed') || process.env.LIME_DESKTOP_TEST_SILENT === '0';
 const releaseBytes = Buffer.from(`lime desktop platform smoke release ${randomUUID()}`, 'utf8');
 const releaseSha256 = createHash('sha256').update(releaseBytes).digest('hex');
+const fixtureSampleName = 'platform-conformance';
+const fixtureAppId = 'lime.platform.conformance';
+const fixtureEntryKey = 'host-conformance';
+const fixtureArtifactPath = '/artifacts/platform-conformance-0.1.1.tgz';
 let servedCatalog = [];
+let mockSession = {
+  state: 'unauthenticated',
+  scopes: [],
+  authMode: 'oauth',
+  source: 'limecore',
+};
+let mockBilling = {
+  state: 'active',
+  planName: 'Mock Limecore Pro',
+  balanceCents: 888800,
+  currency: 'CNY',
+  renewsAt: '2026-06-24T00:00:00.000Z',
+  lastCheckedAt: '2026-05-24T00:00:00.000Z',
+  source: 'limecore',
+};
+let mockOEM = {
+  state: 'customized',
+  brandName: 'Mock Limecore Brand',
+  productName: 'Mock Lime Desktop',
+  channel: 'smoke',
+  theme: 'system',
+  primaryColor: '#0891b2',
+  logoText: 'ML',
+  updatedAt: '2026-05-24T00:00:00.000Z',
+  source: 'limecore',
+};
 
 if (!existsSync(mainEntry)) {
   console.error(`缺少 ${mainEntry}，请先运行 npm run build。`);
@@ -74,14 +103,15 @@ function readSampleCatalogApp(sampleName) {
     updatedAt: metadata.updatedAt ?? '2026-05-23T00:00:00.000Z',
     releaseNotes: metadata.releaseNotes ?? ['smoke fixture'],
     frameworkHighlights: metadata.frameworkHighlights,
+    referenceRuntime: metadata.referenceRuntime ?? metadata.devRuntime,
     devRuntime: metadata.devRuntime,
   };
 }
 
 function createMockCatalog(baseUrl, options = {}) {
-  return ['content-studio', 'oem-starter', 'zhongcao'].map((sampleName) => {
+  return [fixtureSampleName].map((sampleName) => {
     const catalogApp = readSampleCatalogApp(sampleName);
-    if (sampleName !== 'oem-starter' || !options.oemUpdateAvailable) {
+    if (!options.fixtureUpdateAvailable) {
       return catalogApp;
     }
 
@@ -91,10 +121,10 @@ function createMockCatalog(baseUrl, options = {}) {
       updatedAt: new Date().toISOString(),
       releaseNotes: ['Smoke: limecore release artifact 校验链路。'],
       releaseArtifact: {
-        url: `${baseUrl}/artifacts/oem-starter-0.1.1.tgz`,
+        url: `${baseUrl}${fixtureArtifactPath}`,
         sha256: releaseSha256,
         sizeBytes: releaseBytes.byteLength,
-        fileName: 'oem-starter-0.1.1.tgz',
+        fileName: 'platform-conformance-0.1.1.tgz',
       },
     };
   });
@@ -108,7 +138,57 @@ async function startMockLimecoreServer() {
       return;
     }
 
-    if (request.url === '/artifacts/oem-starter-0.1.1.tgz') {
+    if (request.url === '/desktop/v1/session') {
+      if (request.method === 'POST') {
+        mockSession = {
+          state: 'authenticated',
+          tenantId: 'tenant-limecore-smoke',
+          tenantName: 'Smoke 租户',
+          accountEmail: 'smoke@limecloud.local',
+          expiresAt: '2026-06-24T00:00:00.000Z',
+          scopes: ['catalog:read', 'apps:run', 'settings:read', 'billing:read'],
+          authMode: 'oauth',
+          source: 'limecore',
+        };
+        response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+        response.end(JSON.stringify(mockSession));
+        return;
+      }
+
+      if (request.method === 'DELETE') {
+        mockSession = {
+          state: 'unauthenticated',
+          scopes: [],
+          authMode: 'oauth',
+          source: 'limecore',
+        };
+        response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+        response.end(JSON.stringify(mockSession));
+        return;
+      }
+
+      response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      response.end(JSON.stringify(mockSession));
+      return;
+    }
+
+    if (request.url === '/desktop/v1/billing') {
+      mockBilling = {
+        ...mockBilling,
+        lastCheckedAt: new Date().toISOString(),
+      };
+      response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      response.end(JSON.stringify(mockBilling));
+      return;
+    }
+
+    if (request.url === '/desktop/v1/oem') {
+      response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      response.end(JSON.stringify(mockOEM));
+      return;
+    }
+
+    if (request.url === fixtureArtifactPath) {
       response.writeHead(200, {
         'content-type': 'application/gzip',
         'content-length': String(releaseBytes.byteLength),
@@ -239,55 +319,18 @@ async function waitForRendererReady(cdp, timeoutMs = 20_000) {
     if (
       state?.readyState === 'complete' &&
       state.hasBridge &&
-      text.includes('Lime Desktop Platform') &&
-      text.includes('应用中心') &&
-      text.includes('设置中心')
+      text.includes('平台能力总览') &&
+      text.includes('平台应用中心') &&
+      text.includes('云端会话') &&
+      text.includes('模型设置') &&
+      text.includes('Host Bridge') &&
+      text.includes('诊断')
     ) {
       return state;
     }
     await wait(250);
   }
   throw new Error(`Renderer 未在超时时间内完成加载或 preload bridge 缺失：${JSON.stringify(lastState)}`);
-}
-
-async function waitForZhongcaoReady(cdp, timeoutMs = 20_000) {
-  const started = Date.now();
-  let lastState;
-  while (Date.now() - started < timeoutMs) {
-    const state = await evaluate(cdp, `(() => ({
-      readyState: document.readyState,
-      hasBridge: Boolean(window.zhongcao),
-      text: document.body?.innerText ?? ''
-    }))()`);
-    lastState = state;
-    const text = state?.text ?? '';
-    if (
-      state?.readyState === 'complete' &&
-      state.hasBridge &&
-      text.includes('种草日记') &&
-      text.includes('runtime projection') &&
-      text.includes('STREAM 五维') &&
-      text.includes('宿主框架能力') &&
-      text.includes('应用中心') &&
-      text.includes('模型设置') &&
-      text.includes('打开模型设置') &&
-      text.includes('OAuth / 会话') &&
-      text.includes('OEM / 品牌') &&
-      text.includes('充值 / 订阅') &&
-      text.includes('更新 / 分发') &&
-      text.includes('Agent Runtime') &&
-      text.includes('Host Bridge') &&
-      text.includes('本地状态 / 缓存')
-    ) {
-      return state;
-    }
-    await wait(250);
-  }
-  throw new Error(`zhongcao 页面未在超时时间内完成渲染：${JSON.stringify({
-    hasBridge: lastState?.hasBridge,
-    readyState: lastState?.readyState,
-    text: (lastState?.text ?? '').slice(0, 1200),
-  })}`);
 }
 
 async function waitForTarget(port, predicate, timeoutMs = 20_000) {
@@ -330,7 +373,9 @@ const child = spawn(electronPath, electronArgs, {
     LIME_DESKTOP_SMOKE: '1',
     LIME_DESKTOP_TEST_SILENT: headed ? '0' : '1',
     LIMECORE_CATALOG_URL: `${mockLimecore.baseUrl}/desktop/v1/catalog`,
-    LIME_ZHONGCAO_REMOTE_DEBUGGING_PORT: String(zhongcaoRemoteDebuggingPort),
+    LIMECORE_SESSION_URL: `${mockLimecore.baseUrl}/desktop/v1/session`,
+    LIMECORE_BILLING_URL: `${mockLimecore.baseUrl}/desktop/v1/billing`,
+    LIMECORE_OEM_URL: `${mockLimecore.baseUrl}/desktop/v1/oem`,
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -347,8 +392,8 @@ try {
   await waitForRendererReady(cdp);
   const bridgeState = await evaluate(cdp, `(async () => {
     const bootstrap = await window.limeDesktop.platform.getBootstrap();
-    const projection = await window.limeDesktop.apps.install('content-studio');
-    await window.limeDesktop.auth.login({ tenantName: 'Smoke 租户', accountEmail: 'smoke@limecloud.local' });
+    const projection = await window.limeDesktop.apps.install('${fixtureAppId}');
+    const login = await window.limeDesktop.auth.login({ tenantName: 'Smoke 租户', accountEmail: 'smoke@limecloud.local' });
     await window.limeDesktop.settings.saveModel({
       ...bootstrap.modelSettings,
       defaultTextModelId: 'local-default',
@@ -357,76 +402,114 @@ try {
         : provider),
     });
     const billing = await window.limeDesktop.billing.refresh();
-    const launch = await window.limeDesktop.apps.launchEntry({ appId: 'content-studio', entryKey: 'workbench' });
+    const syncedBootstrap = await window.limeDesktop.platform.getBootstrap();
+    const launch = await window.limeDesktop.apps.launchEntry({ appId: '${fixtureAppId}', entryKey: '${fixtureEntryKey}' });
+    const diagnostics = await window.limeDesktop.apps.invokeCapability({
+      appId: '${fixtureAppId}',
+      entryKey: '${fixtureEntryKey}',
+      capability: 'lime.diagnostics',
+      operation: 'smoke',
+    });
     const capability = await window.limeDesktop.apps.invokeCapability({
-      appId: 'content-studio',
-      entryKey: 'workbench',
+      appId: '${fixtureAppId}',
+      entryKey: '${fixtureEntryKey}',
       capability: 'lime.modelSettings',
       operation: 'smoke',
     });
-    const zhongcaoProjection = await window.limeDesktop.apps.install('lime.zhongcao');
-    const zhongcaoLaunch = await window.limeDesktop.apps.launchEntry({
-      appId: 'lime.zhongcao',
-      entryKey: 'diary-workbench',
+    const agentExecution = await window.limeDesktop.apps.invokeCapability({
+      appId: '${fixtureAppId}',
+      entryKey: '${fixtureEntryKey}',
+      capability: 'lime.agentExecution',
+      operation: 'start',
+      input: {
+        prompt: 'smoke agent execution readiness probe',
+        modelPolicy: { capability: 'agent' },
+        toolPolicy: { permissionMode: 'safe' },
+      },
     });
-    const oemProjection = await window.limeDesktop.apps.install('oem-starter');
     return {
       catalogCount: bootstrap.catalog.length,
       controlPlaneSource: bootstrap.diagnostics.controlPlane.source,
-      hasProjection: projection.appId === 'content-studio',
-      hasZhongcaoProjection: zhongcaoProjection.appId === 'lime.zhongcao',
-      hasOemProjection: oemProjection.appId === 'oem-starter',
+      loginSource: login.source,
+      loginAuthMode: login.authMode,
+      sessionSource: syncedBootstrap.authSession.source,
+      billingSource: billing.source,
+      oemSource: syncedBootstrap.oemProjection.source,
+      oemBrandName: syncedBootstrap.oemProjection.brandName,
+      hasProjection: projection.appId === '${fixtureAppId}',
       billingState: billing.state,
       launched: launch.launched,
       snapshotAppId: launch.snapshot?.appId,
       capabilityOk: capability.ok,
-      zhongcaoLaunched: zhongcaoLaunch.launched,
-      zhongcaoSnapshotAppId: zhongcaoLaunch.snapshot?.appId,
-      bodyHasRuntime: document.body.innerText.includes('运行页'),
+      agentExecutionOk: agentExecution.ok,
+      agentExecutionState: agentExecution.output?.state,
+      agentExecutionBackend: agentExecution.output?.backend,
+      agentExecutionEventType: agentExecution.output?.events?.[0]?.type,
+      agentToolCount: agentExecution.output?.events?.[0]?.payload?.toolCount,
+      diagnosticsHasClaudeDescriptor: diagnostics.output?.agentExecution?.backends?.some((backend) =>
+        backend.kind === 'claude-sdk' && backend.status === 'not-installed'
+      ),
+      diagnosticsHasPiDescriptor: diagnostics.output?.agentExecution?.backends?.some((backend) =>
+        backend.kind === 'pi-sidecar' && backend.status === 'not-installed'
+      ),
+      diagnosticsToolCount: diagnostics.output?.agentExecution?.tools?.length,
+      bodyHasRuntime: document.body.innerText.includes('运行'),
     };
   })()`, true);
 
   if (
-    bridgeState.catalogCount < 3 ||
+    bridgeState.catalogCount !== 1 ||
     bridgeState.controlPlaneSource !== 'limecore' ||
+    bridgeState.loginSource !== 'limecore' ||
+    bridgeState.loginAuthMode !== 'oauth' ||
+    bridgeState.sessionSource !== 'limecore' ||
+    bridgeState.billingSource !== 'limecore' ||
+    bridgeState.oemSource !== 'limecore' ||
+    bridgeState.oemBrandName !== 'Mock Limecore Brand' ||
     !bridgeState.hasProjection ||
-    !bridgeState.hasZhongcaoProjection ||
-    !bridgeState.hasOemProjection ||
     bridgeState.billingState !== 'active' ||
     !bridgeState.launched ||
-    bridgeState.snapshotAppId !== 'content-studio' ||
+    bridgeState.snapshotAppId !== fixtureAppId ||
     !bridgeState.capabilityOk ||
-    !bridgeState.zhongcaoLaunched ||
-    bridgeState.zhongcaoSnapshotAppId !== 'lime.zhongcao'
+    bridgeState.agentExecutionOk ||
+    bridgeState.agentExecutionState !== 'blocked' ||
+    bridgeState.agentExecutionBackend !== 'blocked' ||
+    bridgeState.agentExecutionEventType !== 'blocked' ||
+    bridgeState.agentToolCount !== 2 ||
+    !bridgeState.diagnosticsHasClaudeDescriptor ||
+    !bridgeState.diagnosticsHasPiDescriptor ||
+    bridgeState.diagnosticsToolCount !== 2
   ) {
     throw new Error(`Smoke 状态不符合预期：${JSON.stringify(bridgeState)}`);
   }
 
-  servedCatalog = createMockCatalog(mockLimecore.baseUrl, { oemUpdateAvailable: true });
+  servedCatalog = createMockCatalog(mockLimecore.baseUrl, { fixtureUpdateAvailable: true });
   const updateState = await evaluate(cdp, `(async () => {
     const checked = await window.limeDesktop.updates.check();
-    const update = checked.availableUpdates.find((item) => item.appId === 'oem-starter');
-    const downloaded = await window.limeDesktop.updates.download('oem-starter');
-    const applied = await window.limeDesktop.updates.apply('oem-starter');
+    const update = checked.availableUpdates.find((item) => item.appId === '${fixtureAppId}');
+    const downloaded = await window.limeDesktop.updates.download('${fixtureAppId}');
+    const applied = await window.limeDesktop.updates.apply('${fixtureAppId}');
     const installed = await window.limeDesktop.apps.listInstalled();
-    const oemRecord = installed.find((item) => item.appId === 'oem-starter');
+    const fixtureRecord = installed.find((item) => item.appId === '${fixtureAppId}');
     return {
       controlPlaneSource: checked.controlPlane?.source,
+      updateTargetKind: update?.targetKind,
       updateNextVersion: update?.nextVersion,
       updateHasArtifact: Boolean(update?.artifact?.sha256),
       downloadedOk: downloaded.ok,
       downloadedState: downloaded.state,
       downloadedVerified: downloaded.updateState.downloadedUpdates?.some((item) =>
-        item.appId === 'oem-starter' && item.version === '0.1.1' && item.verified
+        item.targetKind === 'agentapp-package' && item.appId === '${fixtureAppId}' && item.version === '0.1.1' && item.verified
       ),
       appliedOk: applied.ok,
       appliedState: applied.state,
-      installedVersion: oemRecord?.version,
-      packageHashMatches: oemRecord?.packageHash === update?.artifact?.sha256,
+      installedVersion: fixtureRecord?.version,
+      packageHashMatches: fixtureRecord?.packageHash === update?.artifact?.sha256,
     };
   })()`, true);
   if (
     updateState.controlPlaneSource !== 'limecore' ||
+    updateState.updateTargetKind !== 'agentapp-package' ||
     updateState.updateNextVersion !== '0.1.1' ||
     !updateState.updateHasArtifact ||
     !updateState.downloadedOk ||
@@ -441,59 +524,6 @@ try {
   }
   bridgeState.limecoreRelease = true;
 
-  const zhongcaoTarget = await waitForTarget(
-    zhongcaoRemoteDebuggingPort,
-    (target) => target.title.includes('种草日记') || target.url.includes('zhongcao'),
-  );
-  const zhongcaoCdp = createCdpClient(zhongcaoTarget.webSocketDebuggerUrl);
-  try {
-    await zhongcaoCdp.send('Runtime.enable');
-    await waitForZhongcaoReady(zhongcaoCdp);
-    const runtimeBridgeState = await evaluate(zhongcaoCdp, `(async () => {
-      const before = await window.zhongcao.getWorkspaceSnapshot();
-      await window.zhongcao.invokeCapability({
-        capability: 'lime.modelSettings',
-        action: 'geo.generateDraft',
-        payload: { draftId: before.data.drafts[0]?.id }
-      });
-      const after = await window.zhongcao.getWorkspaceSnapshot();
-      const task = after.data.generationTasks[0];
-      const intent = await window.zhongcao.openPlatformIntent({
-        target: 'model-settings',
-        reason: 'smoke 验证业务 App 只发送平台设置导航意图'
-      });
-      const afterIntent = await window.zhongcao.getWorkspaceSnapshot();
-      return {
-        taskAction: task?.action,
-        taskSource: task?.source,
-        taskStatus: task?.status,
-        taskId: task?.id,
-        intentOk: intent.ok,
-        intentSource: intent.source,
-        intentTarget: intent.target,
-        intentEventMessage: afterIntent.data.runtimeEvents[0]?.message,
-        eventMessage: after.data.runtimeEvents[0]?.message,
-      };
-    })()`, true);
-    if (
-      runtimeBridgeState.taskAction !== 'geo.generateDraft' ||
-      runtimeBridgeState.taskSource !== 'runtime-projection' ||
-      runtimeBridgeState.taskStatus !== 'succeeded' ||
-      !runtimeBridgeState.taskId ||
-      !runtimeBridgeState.intentOk ||
-      runtimeBridgeState.intentSource !== 'runtime-projection' ||
-      runtimeBridgeState.intentTarget !== 'model-settings' ||
-      !runtimeBridgeState.intentEventMessage?.includes('平台导航意图已发送') ||
-      !runtimeBridgeState.eventMessage?.includes('runtime bridge 能力调用完成')
-    ) {
-      throw new Error(`runtime bridge 状态不符合预期：${JSON.stringify(runtimeBridgeState)}`);
-    }
-    bridgeState.zhongcaoRuntimeBridge = true;
-    bridgeState.zhongcaoPlatformIntent = true;
-  } finally {
-    zhongcaoCdp.close();
-  }
-
   const lifecycleState = await evaluate(cdp, `(async () => {
     const changes = [];
     const stop = window.limeDesktop.platform.onChanged((event) => {
@@ -503,20 +533,20 @@ try {
         installedCount: event.bootstrap.installedApps.length,
       });
     });
-    const uninstall = await window.limeDesktop.apps.uninstall({ appId: 'lime.zhongcao', keepData: true });
+    const uninstall = await window.limeDesktop.apps.uninstall({ appId: '${fixtureAppId}', keepData: true });
     await new Promise((resolve) => setTimeout(resolve, 150));
     stop();
     const bootstrap = await window.limeDesktop.platform.getBootstrap();
-    const projection = await window.limeDesktop.apps.getProjection('lime.zhongcao');
+    const projection = await window.limeDesktop.apps.getProjection('${fixtureAppId}');
     const snapshot = await window.limeDesktop.apps.getRuntimeSnapshot({
-      appId: 'lime.zhongcao',
-      entryKey: 'diary-workbench',
+      appId: '${fixtureAppId}',
+      entryKey: '${fixtureEntryKey}',
     });
     return {
       uninstallOk: uninstall.ok,
       uninstallStatus: uninstall.status,
-      changeSeen: changes.some((event) => event.reason === 'app-uninstalled' && event.appId === 'lime.zhongcao'),
-      installedGone: !bootstrap.installedApps.some((app) => app.appId === 'lime.zhongcao'),
+      changeSeen: changes.some((event) => event.reason === 'app-uninstalled' && event.appId === '${fixtureAppId}'),
+      installedGone: !bootstrap.installedApps.some((app) => app.appId === '${fixtureAppId}'),
       snapshotGone: !snapshot,
       projectionState: projection.readiness.state,
       entryDisabled: projection.entryCards.every((entry) => !entry.enabled),
@@ -533,7 +563,7 @@ try {
   ) {
     throw new Error(`生命周期状态不符合预期：${JSON.stringify(lifecycleState)}`);
   }
-  bridgeState.zhongcaoLifecycle = true;
+  bridgeState.fixtureLifecycle = true;
 
   if (cdp.exceptions.length > 0) {
     throw new Error(`Renderer 发生异常：${cdp.exceptions.join('; ')}`);

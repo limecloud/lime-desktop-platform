@@ -14,8 +14,8 @@ repo: lime-desktop-platform
 
 | 角色 | 目标 | 主要入口 |
 | --- | --- | --- |
-| 普通用户 | 打开已安装 App 并开始使用 | 应用中心 / 最近使用 / 入口卡片 |
-| App 管理员 | 安装、更新、启用、禁用 App | 应用中心 / 应用详情 |
+| 普通用户 | 打开 Product App 内已 ready 的入口并开始使用 | 应用中心 / 最近使用 / 入口卡片 |
+| App 管理员 | 安装、更新、启用、禁用 agentapp package | 应用中心 / 应用详情 |
 | 平台管理员 | 配置模型、OAuth、OEM、充值和代理 | 设置中心 |
 | 开发者 | 检查 manifest、readiness 和 bridge 日志 | 开发者页 |
 | OEM 运营 | 切换品牌、渠道和展示文案 | OEM 设置页 |
@@ -30,7 +30,7 @@ repo: lime-desktop-platform
 -> 检查 OAuth / 会话
 -> 拉取应用中心目录
 -> 展示应用列表
--> 进入 App 或设置页
+-> 进入业务入口或设置页
 ```
 
 成功标准：
@@ -39,24 +39,24 @@ repo: lime-desktop-platform
 - 用户看见当前可用 App。
 - 未登录时能进入登录流程。
 
-### 3.2 安装一个新 App
+### 3.2 安装一个新 Agent App Package
 
 ```text
-在应用中心选择 App
+在应用中心选择 agentapp package
 -> 查看详情
 -> 下载 / 校验 / projection / readiness
 -> 补齐设置或授权
 -> 启用入口
--> 启动 App
+-> 打开入口或允许 capability 调用
 ```
 
 成功标准：
 
 - 安装前能看见版本和来源。
 - blocked 原因能显示。
-- ready 才能启动。
+- ready 才能打开入口或调用能力。
 
-### 3.3 更新已有 App
+### 3.3 更新已有 Agent App Package
 
 ```text
 平台检查更新
@@ -121,7 +121,7 @@ App 显示 needs-setup
 
 | 页面 | 主动作 | 次动作 |
 | --- | --- | --- |
-| 应用中心 | 安装 / 启动 | 查看详情 / 更新 |
+| 应用中心 | 安装 / 启动 entry | 查看详情 / 更新 package |
 | 应用详情 | 启动 / 启用 | 禁用 / 查看版本 |
 | 设置中心 | 保存配置 | 切换子页 |
 | 运行页 | 查看事件流 | 返回应用中心 |
@@ -139,10 +139,10 @@ App 显示 needs-setup
 -> 进入应用中心或默认入口
 ```
 
-### 5.2 安装 App
+### 5.2 安装 Agent App Package
 
 ```text
-在应用中心选择 App
+在应用中心选择 agentapp package
 -> 查看 manifest / 版本 / 来源
 -> 下载或校验本地包
 -> 生成 projection
@@ -150,13 +150,13 @@ App 显示 needs-setup
 -> 进入 ready 或显式阻断
 ```
 
-### 5.3 启动 App
+### 5.3 启动 Agent App Entry
 
 ```text
 点击启动
 -> Host Runtime 初始化
 -> 注入 host snapshot
--> App 进入运行页
+-> entry 进入运行页
 -> 调用桥接能力
 ```
 
@@ -195,6 +195,7 @@ App 显示 needs-setup
 
 | 复用对象 | 目标 | 验收要点 |
 | --- | --- | --- |
-| `content-studio` | 作为首个样板 App | 能在不复制登录和设置逻辑的情况下接入 |
-| `zhongcao` | 作为第二个样板 App | 能共用同一套应用中心和宿主桥接 |
-| 后续 OEM App | 作为泛化客户 | 只需要替换 manifest、品牌和少量入口 |
+| `content-studio` | 作为首个 Product App 消费者 | 能在不复制登录和设置逻辑的情况下接入 |
+| `zhongcao` | 作为独立 Product App 消费者 | 能在自己的壳内实现产品内 agentapp 应用中心，并消费平台 Host Bridge 和宿主 capability |
+| `samples/platform-conformance` | 作为中性 reference fixture | 能验证标准 Host Bridge、Capability SDK、Host Snapshot 和平台导航意图 |
+| 后续 OEM App | 作为泛化客户 | 只需要替换 manifest、品牌、产品内入口和少量业务能力 |

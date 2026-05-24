@@ -7,6 +7,8 @@ export type OAuthState = 'unauthenticated' | 'authenticated' | 'expired';
 export type OEMState = 'unbranded' | 'branded' | 'customized';
 export type InstallMode = 'in_lime' | 'standalone' | 'runtime_backed';
 export type ControlPlaneCatalogSource = 'samples' | 'limecore';
+export type ControlPlaneProjectionSource = 'local-dev' | 'limecore';
+export type UpdateTargetKind = 'agentapp-package';
 export type AppEntryKind = 'page' | 'workflow' | 'expert-chat' | 'settings' | 'diagnostics';
 
 export type AppLifecycleState =
@@ -33,7 +35,8 @@ export type PlatformCapability =
   | 'lime.appUpdates'
   | 'lime.download'
   | 'lime.permissions'
-  | 'lime.diagnostics';
+  | 'lime.diagnostics'
+  | 'lime.agentExecution';
 
 export interface DesktopAppEntry {
   key: string;
@@ -140,6 +143,13 @@ export interface RuntimeBridgeDescriptor {
   expiresAt: string;
 }
 
+export interface ReferenceRuntimeDescriptor {
+  projectRootEnv?: string;
+  relativeProjectRoot?: string;
+  mainEntry?: string;
+  remoteDebuggingPortEnv?: string;
+}
+
 export type HostBridgeMessageType =
   | 'ready'
   | 'snapshot'
@@ -174,12 +184,11 @@ export interface CatalogApp {
     state: ReadinessState | 'dev-projection';
     detail: string;
   }>;
-  devRuntime?: {
-    projectRootEnv?: string;
-    relativeProjectRoot?: string;
-    mainEntry?: string;
-    remoteDebuggingPortEnv?: string;
-  };
+  referenceRuntime?: ReferenceRuntimeDescriptor;
+  /**
+   * @deprecated Compat alias for early smoke fixtures. New catalog metadata must use referenceRuntime.
+   */
+  devRuntime?: ReferenceRuntimeDescriptor;
 }
 
 export interface ReleaseArtifact {
@@ -220,6 +229,7 @@ export interface CloudSessionSnapshot {
   expiresAt?: string;
   scopes: string[];
   authMode?: 'oauth' | 'local-dev';
+  source?: ControlPlaneProjectionSource;
 }
 
 export interface BillingSnapshot {
@@ -229,6 +239,7 @@ export interface BillingSnapshot {
   currency?: string;
   renewsAt?: string;
   lastCheckedAt: string;
+  source?: ControlPlaneProjectionSource;
 }
 
 export interface OEMProjection {
@@ -240,6 +251,7 @@ export interface OEMProjection {
   primaryColor: string;
   logoText: string;
   updatedAt: string;
+  source?: ControlPlaneProjectionSource;
 }
 
 export interface PlatformSettings {
@@ -256,6 +268,7 @@ export interface PlatformSettings {
 }
 
 export interface UpdateCandidate {
+  targetKind: UpdateTargetKind;
   appId: string;
   currentVersion: string;
   nextVersion: string;
@@ -264,6 +277,7 @@ export interface UpdateCandidate {
 }
 
 export interface DownloadedUpdateArtifact {
+  targetKind: UpdateTargetKind;
   appId: string;
   version: string;
   fileName: string;
@@ -279,8 +293,17 @@ export interface ControlPlaneStatus {
   source: ControlPlaneCatalogSource;
   baseUrl?: string;
   catalogUrl?: string;
+  sessionUrl?: string;
+  billingUrl?: string;
+  oemUrl?: string;
   lastSyncedAt?: string;
   lastError?: string;
+  sessionLastSyncedAt?: string;
+  sessionLastError?: string;
+  billingLastSyncedAt?: string;
+  billingLastError?: string;
+  oemLastSyncedAt?: string;
+  oemLastError?: string;
 }
 
 export interface UpdateState {
@@ -306,6 +329,64 @@ export interface CapabilityInvokeInput {
   capability: PlatformCapability;
   operation: string;
   input?: unknown;
+}
+
+export type AgentExecutionBackendKind = 'blocked' | 'generic-text' | 'claude-sdk' | 'pi-sidecar';
+export type AgentExecutionState = 'needs-setup' | 'blocked' | 'started' | 'completed' | 'failed';
+export type AgentExecutionEventType =
+  | 'started'
+  | 'assistant-delta'
+  | 'tool-call'
+  | 'tool-result'
+  | 'permission-request'
+  | 'needs-setup'
+  | 'blocked'
+  | 'completed'
+  | 'failed';
+
+export interface AgentExecutionAttachment {
+  kind: 'text' | 'image' | 'file';
+  ref: string;
+  mimeType?: string;
+}
+
+export interface AgentExecutionRequest {
+  appId: string;
+  entryKey: string;
+  agentAppId?: string;
+  taskId?: string;
+  prompt: string;
+  attachments?: AgentExecutionAttachment[];
+  modelPolicy?: {
+    preferredModelId?: string;
+    capability: 'text' | 'agent' | 'vision';
+  };
+  toolPolicy?: {
+    allowedToolIds?: string[];
+    permissionMode?: 'safe' | 'ask' | 'allow-all';
+  };
+}
+
+export interface AgentExecutionEvent {
+  sessionId: string;
+  sequence: number;
+  type: AgentExecutionEventType;
+  payload: unknown;
+  evidence?: Array<{
+    label: string;
+    ref: string;
+  }>;
+}
+
+export interface AgentExecutionResult {
+  ok: boolean;
+  state: AgentExecutionState;
+  sessionId: string;
+  backend: AgentExecutionBackendKind;
+  message: string;
+  readiness: ReadinessResult;
+  request: AgentExecutionRequest;
+  events: AgentExecutionEvent[];
 }
 
 export type PlatformNavigationTarget =

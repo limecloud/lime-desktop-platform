@@ -4,6 +4,7 @@ import { app } from 'electron';
 import type { CatalogApp, DesktopAppManifest, PlatformCapability, SourceKind } from '../../shared/types';
 
 interface DevCatalogMetadata {
+  catalogScope?: 'platform-conformance' | 'external-product-reference' | 'docs-only';
   sourceKind?: SourceKind;
   description?: string;
   categories?: string[];
@@ -12,6 +13,7 @@ interface DevCatalogMetadata {
   releaseNotes?: string[];
   releaseArtifact?: CatalogApp['releaseArtifact'];
   frameworkHighlights?: CatalogApp['frameworkHighlights'];
+  referenceRuntime?: CatalogApp['referenceRuntime'];
   devRuntime?: CatalogApp['devRuntime'];
 }
 
@@ -29,6 +31,7 @@ function isPlatformCapability(value: string): value is PlatformCapability {
     'lime.download',
     'lime.permissions',
     'lime.diagnostics',
+    'lime.agentExecution',
   ].includes(value);
 }
 
@@ -53,6 +56,7 @@ function createCatalogApp(manifest: DesktopAppManifest, metadata: DevCatalogMeta
     releaseNotes: metadata.releaseNotes ?? ['从 samples fixture 加载。'],
     releaseArtifact: metadata.releaseArtifact,
     frameworkHighlights: metadata.frameworkHighlights,
+    referenceRuntime: metadata.referenceRuntime ?? metadata.devRuntime,
     devRuntime: metadata.devRuntime,
   };
 }
@@ -73,8 +77,12 @@ function loadSampleCatalog(): CatalogApp[] {
         return [];
       }
 
-      const manifest = normalizeManifest(readJsonFile<DesktopAppManifest>(manifestPath));
       const metadata = readJsonFile<DevCatalogMetadata>(metadataPath);
+      if (metadata.catalogScope !== 'platform-conformance') {
+        return [];
+      }
+
+      const manifest = normalizeManifest(readJsonFile<DesktopAppManifest>(manifestPath));
       return [createCatalogApp(manifest, metadata)];
     });
 }

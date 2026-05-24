@@ -125,6 +125,7 @@ export interface ReleaseArtifact {
 }
 
 export interface UpdateCandidate {
+  targetKind: 'agentapp-package';
   appId: string;
   currentVersion: string;
   nextVersion: string;
@@ -252,12 +253,13 @@ Projection 的职责是把 manifest 转成宿主可读对象，不运行 App 代
 
 ### 7.1 更新与发布校验
 
-- `updates:check` 必须同步当前 catalog，并返回 `UpdateCandidate[]`。
-- `updates:download` 只有在 catalog 提供 `releaseArtifact` 时才执行真实下载。
+- `updates:check` 必须同步当前 agentapp package catalog，并返回 `targetKind: 'agentapp-package'` 的 `UpdateCandidate[]`。
+- `updates:download` 只有在 catalog 提供 agentapp package `releaseArtifact` 时才执行真实下载。
 - artifact 必须校验 `sha256`，可选校验 `sizeBytes`。
 - 校验失败必须返回 `blocked`，不得写成下载成功。
 - 已校验 artifact 写入 `.lime-desktop/app-artifacts/`。
 - `updates:apply` 对带 artifact 的更新必须先确认已下载且 verified。
+- 这组 IPC 不替换 Product App 安装包；Product App 自身更新由产品安装器、Electron updater、Tauri updater 或系统包管理器负责。
 
 ### 7.2 平台变化事件
 
@@ -272,8 +274,8 @@ Projection 的职责是把 manifest 转成宿主可读对象，不运行 App 代
 
 ### 7.3 平台导航意图
 
-runtime-backed App 不能直接打开宿主内部页面，也不能复制设置 UI。
-业务 App 只能发送导航意图，例如打开模型设置、OAuth、billing、更新或诊断页。
+业务 App 和 reference runtime fixture 不能直接打开宿主内部页面，也不能复制设置 UI。
+它们只能发送导航意图，例如打开模型设置、OAuth、billing、更新或诊断页。
 
 第一阶段 Runtime Bridge 路径：
 
@@ -281,6 +283,67 @@ runtime-backed App 不能直接打开宿主内部页面，也不能复制设置 
 - 输入：`PlatformNavigationIntent`
 - 输出：`PlatformNavigationResult`
 - 结果：当前 Electron 实现先写入 runtime event，后续 UI 路由聚焦在壳层补齐。
+
+### 7.4 Agent Execution Capability 规划
+
+Claude SDK、Pi 和 MCP session tools 不作为 Product App 的公开依赖。业务 App 只能通过平台 capability 发起 agent execution。下一阶段建议增加平台能力：
+
+- capability id：`lime.agentExecution`
+- 入口：`apps.invokeCapability({ capability: 'lime.agentExecution', operation: 'start' })`
+- 事件：统一归一化为 `AgentExecutionEvent`
+- 后端：`ClaudeSdkExecutionBackend`、`PiExecutionBackend`、`GenericTextBackend`、`BlockedBackend`
+
+规划契约：
+
+```ts
+export interface AgentExecutionRequest {
+  appId: string;
+  entryKey: string;
+  agentAppId?: string;
+  taskId?: string;
+  prompt: string;
+  attachments?: Array<{
+    kind: 'text' | 'image' | 'file';
+    ref: string;
+    mimeType?: string;
+  }>;
+  modelPolicy?: {
+    preferredModelId?: string;
+    capability: 'text' | 'agent' | 'vision';
+  };
+  toolPolicy?: {
+    allowedToolIds?: string[];
+    permissionMode?: 'safe' | 'ask' | 'allow-all';
+  };
+}
+
+export interface AgentExecutionEvent {
+  sessionId: string;
+  sequence: number;
+  type:
+    | 'started'
+    | 'assistant-delta'
+    | 'tool-call'
+    | 'tool-result'
+    | 'permission-request'
+    | 'needs-setup'
+    | 'blocked'
+    | 'completed'
+    | 'failed';
+  payload: unknown;
+  evidence?: Array<{
+    label: string;
+    ref: string;
+  }>;
+}
+```
+
+进入 `packages/contracts` 前必须满足：
+
+- 与 `agentapp` 的 capability、readiness 和 Host Bridge 语义对齐。
+- 不泄露 Claude SDK、Pi SDK、MCP SDK 的 provider-specific 类型。
+- 缺模型、缺 OAuth、缺 billing entitlement、backend 未安装时只返回 `needs-setup` 或 `blocked`。
+- 工具调用必须经过平台 Tool Registry 和 Permission Pipeline。
 
 ## 8. 存储契约
 

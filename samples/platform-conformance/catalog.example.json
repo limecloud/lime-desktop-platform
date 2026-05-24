@@ -1,0 +1,26 @@
+{
+  "catalogScope": "platform-conformance",
+  "sourceKind": "local",
+  "description": "中性宿主一致性 fixture，用于验证平台应用中心、readiness、Host Snapshot、Capability SDK、PlatformNavigationIntent 和 runtime bridge，不代表任何真实 Product App。",
+  "categories": ["Conformance", "Fixture", "Agent App"],
+  "latestVersion": "0.1.0",
+  "updatedAt": "2026-05-24T00:00:00.000Z",
+  "releaseNotes": ["建立中性平台一致性 fixture。", "替代平台 App 内真实产品名样板，避免把 Product App 误建成平台子 App。"],
+  "frameworkHighlights": [
+    {
+      "label": "Host Snapshot",
+      "state": "needs-setup",
+      "detail": "验证非敏感平台投影注入，不包含 token、secret 或 billing 原始账本。"
+    },
+    {
+      "label": "Capability SDK",
+      "state": "needs-setup",
+      "detail": "验证模型设置、会话、billing、OEM 和更新能力的统一裁决。"
+    },
+    {
+      "label": "PlatformNavigationIntent",
+      "state": "dev-projection",
+      "detail": "验证业务侧只发送导航意图，不复制平台设置 UI。"
+    }
+  ]
+}

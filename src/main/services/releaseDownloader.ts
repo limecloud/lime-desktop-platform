@@ -74,6 +74,7 @@ export async function downloadAndVerifyReleaseArtifact(input: {
   await writeFile(filePath, bytes);
 
   return {
+    targetKind: 'agentapp-package',
     appId: input.appId,
     version: input.version,
     fileName,

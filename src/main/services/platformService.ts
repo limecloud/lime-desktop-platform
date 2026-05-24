@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { app } from 'electron';
 import { seedCatalog } from './seedCatalog';
+import { AgentExecutionService } from './agentExecution';
 import { LimecoreControlPlane } from './limecoreControlPlane';
 import { PlatformStore } from './platformStore';
 import { downloadAndVerifyReleaseArtifact } from './releaseDownloader';
@@ -73,15 +74,18 @@ export class PlatformService {
   private readonly store = new PlatformStore();
   private catalog = seedCatalog;
   private readonly controlPlane = new LimecoreControlPlane();
+  private readonly agentExecution = new AgentExecutionService();
   private readonly childProcesses = new Map<string, ChildProcess>();
   private readonly runtimeBridge = new RuntimeBridgeServer(
     (input) => this.invokeCapability(input),
     (input) => this.openNavigationIntent(input),
   );
   private lastCatalogSyncAt = 0;
+  private lastControlPlaneProjectionSyncAt = 0;
 
   async getBootstrap(): Promise<PlatformBootstrap> {
     await this.syncCatalog();
+    await this.syncControlPlaneProjections();
     const projections = this.listProjections();
     return {
       hostProfile: this.getHostProfile(),
@@ -158,7 +162,7 @@ export class PlatformService {
     this.appendEvent({
       level: 'info',
       appId,
-      message: `${catalogApp.manifest.displayName} 已写入本地安装记录。`,
+      message: `${catalogApp.manifest.displayName} agentapp package 已写入本地安装记录。`,
       payload: { sourceKind: catalogApp.sourceKind, version: catalogApp.latestVersion },
     });
 
@@ -174,7 +178,7 @@ export class PlatformService {
       this.appendEvent({
         level: 'info',
         appId,
-        message: `${catalogApp.manifest.displayName} 已是最新版本。`,
+        message: `${catalogApp.manifest.displayName} agentapp package 已是最新版本。`,
       });
       return this.getProjection(appId);
     }
@@ -206,27 +210,27 @@ export class PlatformService {
       const event = this.appendEvent({
         level: 'warning',
         appId: input.appId,
-        message: `${catalogApp.manifest.displayName} 未安装，无需卸载。`,
+        message: `${catalogApp.manifest.displayName} agentapp package 未安装，无需卸载。`,
       });
 
       return {
         ok: false,
         appId: input.appId,
         status: 'blocked',
-        message: '应用尚未安装。',
+        message: 'agentapp package 尚未安装。',
         projectedApp: this.createProjection(catalogApp),
         runtimeEvents: [event, ...this.store.readRuntimeEvents().filter((item) => item.id !== event.id).slice(-19)],
       };
     }
 
-    this.stopRuntimeApp(input.appId);
+    this.stopReferenceRuntimeFixture(input.appId);
     this.store.writeInstalledApps(installedApps.filter((record) => record.appId !== input.appId));
     this.store.removeRuntimeSnapshotsForApp(input.appId);
     const projection = this.persistProjection(input.appId);
     const event = this.appendEvent({
       level: 'warning',
       appId: input.appId,
-      message: `${catalogApp.manifest.displayName} 已从当前工作区卸载。`,
+      message: `${catalogApp.manifest.displayName} agentapp package 已从当前工作区卸载。`,
       payload: {
         keepData: input.keepData ?? true,
         removedVersion: installed.version,
@@ -237,7 +241,10 @@ export class PlatformService {
       ok: true,
       appId: input.appId,
       status: 'removed',
-      message: input.keepData === false ? '应用已卸载；业务数据清理由后续安全删除流程承接。' : '应用已卸载，业务数据保留。',
+      message:
+        input.keepData === false
+          ? 'agentapp package 已卸载；业务数据清理由后续安全删除流程承接。'
+          : 'agentapp package 已卸载，业务数据保留。',
       projectedApp: projection,
       runtimeEvents: [event, ...this.store.readRuntimeEvents().filter((item) => item.id !== event.id).slice(-19)],
     };
@@ -284,7 +291,7 @@ export class PlatformService {
       payload: snapshot,
     };
 
-    const runtimeStart = await this.launchRuntimeBackedApp(input, snapshot);
+    const runtimeStart = await this.launchReferenceRuntimeFixture(input, snapshot);
     if (!runtimeStart.ok) {
       const blockedReadiness: ReadinessResult = {
         state: runtimeStart.fixable ? 'needs-setup' : 'blocked',
@@ -295,13 +302,13 @@ export class PlatformService {
             fixable: runtimeStart.fixable,
           },
         ],
-        setupActions: runtimeStart.fixable ? ['先构建 runtime-backed App，并检查 catalog devRuntime 配置。'] : [],
+        setupActions: runtimeStart.fixable ? ['先构建 reference runtime fixture，并检查 catalog referenceRuntime 配置。'] : [],
       };
       const event = this.appendEvent({
         level: runtimeStart.fixable ? 'warning' : 'error',
         appId: input.appId,
         entryKey: input.entryKey,
-        message: `runtime-backed 启动未完成：${runtimeStart.message}`,
+        message: `reference runtime fixture 启动未完成：${runtimeStart.message}`,
         payload: blockedReadiness,
       });
 
@@ -343,11 +350,20 @@ export class PlatformService {
     const requestId = randomUUID();
     const output = this.resolveCapabilityOutput(input);
     const ok = output !== undefined;
+    const agentExecutionBlocked =
+      input.capability === 'lime.agentExecution' &&
+      typeof output === 'object' &&
+      output !== null &&
+      'ok' in output &&
+      (output as { ok?: unknown }).ok === false;
     const event = this.appendEvent({
-      level: ok ? 'info' : 'error',
+      level: ok && !agentExecutionBlocked ? 'info' : 'error',
       appId: input.appId,
       entryKey: input.entryKey,
-      message: ok ? `能力调用成功：${input.capability}` : `能力调用失败：${input.capability}`,
+      message:
+        ok && !agentExecutionBlocked
+          ? `能力调用成功：${input.capability}`
+          : `能力调用被阻断：${input.capability}`,
       payload: { operation: input.operation, input: input.input },
     });
 
@@ -358,6 +374,22 @@ export class PlatformService {
         error: {
           code: 'capability-not-supported',
           message: `宿主不支持能力：${input.capability}`,
+        },
+        event,
+      };
+    }
+
+    if (agentExecutionBlocked) {
+      return {
+        ok: false,
+        requestId,
+        output,
+        error: {
+          code: 'agent-execution-blocked',
+          message:
+            typeof output === 'object' && output !== null && 'message' in output && typeof output.message === 'string'
+              ? output.message
+              : 'Agent Execution Runtime 当前不可用。',
         },
         event,
       };
@@ -395,11 +427,11 @@ export class PlatformService {
     return this.store.readRuntimeSnapshots()[this.snapshotKey(input)];
   }
 
-  shutdownRuntimeBackedApps(): void {
+  shutdownReferenceRuntimeFixtures(): void {
     for (const [appId, childProcess] of this.childProcesses.entries()) {
       if (childProcess.exitCode === null && childProcess.signalCode === null) {
         childProcess.kill();
-        this.appendEvent({ level: 'info', appId, message: '测试运行结束，已关闭 runtime-backed 子进程。' });
+        this.appendEvent({ level: 'info', appId, message: '测试运行结束，已关闭 reference runtime fixture 子进程。' });
       }
       this.childProcesses.delete(appId);
     }
@@ -439,12 +471,31 @@ export class PlatformService {
   }
 
   getAuthSession(): CloudSessionSnapshot {
-    return this.store.readAuthSession();
+    const session = this.store.readAuthSession();
+    return {
+      ...session,
+      source: session.source ?? 'local-dev',
+    };
   }
 
-  login(input: LoginInput): CloudSessionSnapshot {
+  async login(input: LoginInput): Promise<CloudSessionSnapshot> {
+    const session = await this.controlPlane.login(input, () => this.createLocalDevSession(input));
+    this.store.writeAuthSession(session);
+    this.refreshAllProjections();
+    this.appendEvent({
+      level: 'info',
+      message:
+        session.source === 'limecore'
+          ? 'limecore OAuth 会话投影已建立。'
+          : '本地开发会话已建立，未写入任何 OAuth token。',
+      payload: { source: session.source, state: session.state },
+    });
+    return session;
+  }
+
+  private createLocalDevSession(input: LoginInput): CloudSessionSnapshot {
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString();
-    const session: CloudSessionSnapshot = {
+    return {
       state: 'authenticated',
       tenantId: `tenant-${hashValue(input.tenantName).slice(0, 8)}`,
       tenantName: input.tenantName.trim() || 'Lime 内部租户',
@@ -452,46 +503,68 @@ export class PlatformService {
       expiresAt,
       scopes: ['catalog:read', 'apps:run', 'settings:read'],
       authMode: 'local-dev',
+      source: 'local-dev',
     };
+  }
+
+  async logout(): Promise<CloudSessionSnapshot> {
+    const session = await this.controlPlane.logout(() => this.createLoggedOutSession('local-dev'));
     this.store.writeAuthSession(session);
     this.refreshAllProjections();
-    this.appendEvent({ level: 'info', message: '本地开发会话已建立，未写入任何 OAuth token。' });
+    this.appendEvent({
+      level: 'warning',
+      message: session.source === 'limecore' ? 'limecore 会话已退出。' : '会话已退出。',
+      payload: { source: session.source, state: session.state },
+    });
     return session;
   }
 
-  logout(): CloudSessionSnapshot {
+  private createLoggedOutSession(source: CloudSessionSnapshot['source'] = 'local-dev'): CloudSessionSnapshot {
     const session: CloudSessionSnapshot = {
       state: 'unauthenticated',
       scopes: [],
+      authMode: source === 'limecore' ? 'oauth' : 'local-dev',
+      source,
     };
-    this.store.writeAuthSession(session);
-    this.refreshAllProjections();
-    this.appendEvent({ level: 'warning', message: '会话已退出。' });
     return session;
   }
 
   getBillingState(): BillingSnapshot {
-    return this.store.readBillingState();
+    const billing = this.store.readBillingState();
+    return {
+      ...billing,
+      source: billing.source ?? 'local-dev',
+    };
   }
 
-  refreshBilling(): BillingSnapshot {
+  async refreshBilling(): Promise<BillingSnapshot> {
     const current = this.store.readBillingState();
-    const nextState: BillingSnapshot = {
+    const localFallback: BillingSnapshot = {
       ...current,
       state: current.state === 'suspended' ? 'suspended' : 'active',
       planName: current.planName ?? '平台开发套餐',
       balanceCents: current.balanceCents ?? 100000,
       currency: current.currency ?? 'CNY',
       lastCheckedAt: nowIso(),
+      source: 'local-dev',
     };
+    const nextState = await this.controlPlane.fetchBilling(localFallback);
     this.store.writeBillingState(nextState);
     this.refreshAllProjections();
-    this.appendEvent({ level: 'info', message: '充值状态投影已刷新。', payload: nextState });
+    this.appendEvent({
+      level: 'info',
+      message: nextState.source === 'limecore' ? 'limecore 充值状态投影已刷新。' : '充值状态投影已刷新。',
+      payload: nextState,
+    });
     return nextState;
   }
 
   getOEMProjection() {
-    return this.store.readOEMProjection();
+    const projection = this.store.readOEMProjection();
+    return {
+      ...projection,
+      source: projection.source ?? 'local-dev',
+    };
   }
 
   async checkUpdates(): Promise<UpdateState> {
@@ -509,13 +582,13 @@ export class PlatformService {
       const event = this.appendEvent({
         level: 'warning',
         appId,
-        message: '没有可下载的更新。',
+        message: '没有可下载的 agentapp package 更新。',
       });
 
       return {
         ok: false,
         state: 'idle',
-        message: '当前没有可用更新。',
+        message: '当前没有可用 agentapp package 更新。',
         updateState,
         event,
       };
@@ -525,14 +598,14 @@ export class PlatformService {
       const event = this.appendEvent({
         level: 'warning',
         appId,
-        message: '更新缺少 release artifact，已阻断下载。',
+        message: 'agentapp package 更新缺少 release artifact，已阻断下载。',
         payload: update,
       });
 
       return {
         ok: false,
         state: 'blocked',
-        message: '目录存在新版本，但缺少可校验的 release artifact。',
+        message: '目录存在 agentapp package 新版本，但缺少可校验的 release artifact。',
         updateState,
         event,
       };
@@ -549,14 +622,14 @@ export class PlatformService {
       const event = this.appendEvent({
         level: 'info',
         appId,
-        message: '更新包已下载并通过 sha256 校验。',
+        message: 'agentapp package 更新包已下载并通过 sha256 校验。',
         payload: downloaded,
       });
 
       return {
         ok: true,
         state: 'downloaded',
-        message: '更新包已下载并校验完成。',
+        message: 'agentapp package 更新包已下载并校验完成。',
         updateState: nextUpdateState,
         event,
       };
@@ -564,7 +637,7 @@ export class PlatformService {
       const event = this.appendEvent({
         level: 'error',
         appId,
-        message: '更新包下载或校验失败。',
+        message: 'agentapp package 更新包下载或校验失败。',
         payload: {
           error: error instanceof Error ? error.message : 'download failed',
           update,
@@ -574,7 +647,7 @@ export class PlatformService {
       return {
         ok: false,
         state: 'blocked',
-        message: error instanceof Error ? error.message : '更新包下载或校验失败。',
+        message: error instanceof Error ? error.message : 'agentapp package 更新包下载或校验失败。',
         updateState,
         event,
       };
@@ -588,13 +661,13 @@ export class PlatformService {
       const event = this.appendEvent({
         level: 'warning',
         appId,
-        message: '没有可应用的更新。',
+        message: '没有可应用的 agentapp package 更新。',
       });
 
       return {
         ok: false,
         state: 'idle',
-        message: '当前没有可用更新。',
+        message: '当前没有可用 agentapp package 更新。',
         updateState,
         event,
       };
@@ -604,14 +677,14 @@ export class PlatformService {
       const event = this.appendEvent({
         level: 'warning',
         appId,
-        message: '更新包尚未下载或校验未通过。',
+        message: 'agentapp package 更新包尚未下载或校验未通过。',
         payload: update,
       });
 
       return {
         ok: false,
         state: 'blocked',
-        message: '请先下载并校验更新包。',
+        message: '请先下载并校验 agentapp package 更新包。',
         updateState,
         event,
       };
@@ -622,14 +695,16 @@ export class PlatformService {
     const event = this.appendEvent({
       level: 'info',
       appId,
-      message: update.artifact ? '更新已从已校验 release artifact 应用。' : '开发态更新已应用到本地安装记录。',
+      message: update.artifact
+        ? 'agentapp package 更新已从已校验 release artifact 应用。'
+        : '开发态 agentapp package 更新已应用到本地安装记录。',
       payload: { readiness: projection.readiness },
     });
 
     return {
       ok: true,
       state: 'applied',
-      message: update.artifact ? '已切换到已校验的 release 版本。' : '已切换到目录中的最新版本。',
+      message: update.artifact ? '已切换到已校验的 agentapp package release 版本。' : '已切换到目录中的最新 package 版本。',
       updateState: nextUpdateState,
       event,
     };
@@ -662,6 +737,23 @@ export class PlatformService {
     this.lastCatalogSyncAt = Date.now();
   }
 
+  private async syncControlPlaneProjections(force = false): Promise<void> {
+    const syncIntervalMs = 30_000;
+    if (!force && Date.now() - this.lastControlPlaneProjectionSyncAt < syncIntervalMs) {
+      return;
+    }
+
+    const [session, billing, oem] = await Promise.all([
+      this.controlPlane.fetchSession(this.getAuthSession()),
+      this.controlPlane.fetchBilling(this.getBillingState()),
+      this.controlPlane.fetchOEM(this.getOEMProjection()),
+    ]);
+    this.store.writeAuthSession(session);
+    this.store.writeBillingState(billing);
+    this.store.writeOEMProjection(oem);
+    this.lastControlPlaneProjectionSyncAt = Date.now();
+  }
+
   private createUpdateState(): UpdateState {
     const existingState = this.store.readUpdateState();
     const installedApps = this.listInstalled();
@@ -673,6 +765,7 @@ export class PlatformService {
 
       return [
         {
+          targetKind: 'agentapp-package',
           appId: installed.appId,
           currentVersion: installed.version,
           nextVersion: catalogApp.latestVersion,
@@ -847,6 +940,7 @@ export class PlatformService {
         'lime.download',
         'lime.permissions',
         'lime.diagnostics',
+        'lime.agentExecution',
       ],
       locale: platformSettings.locale,
       theme: platformSettings.theme,
@@ -871,11 +965,11 @@ export class PlatformService {
     };
   }
 
-  private async launchRuntimeBackedApp(
+  private async launchReferenceRuntimeFixture(
     input: LaunchEntryInput,
     snapshot: HostSnapshot,
   ): Promise<{ ok: true; message: string; payload?: unknown } | { ok: false; code: string; message: string; fixable: boolean }> {
-    const runtimeApp = this.resolveRuntimeBackedApp(input.appId);
+    const runtimeApp = this.resolveReferenceRuntimeFixture(input.appId);
     if (!runtimeApp) {
       return {
         ok: true,
@@ -888,7 +982,7 @@ export class PlatformService {
       return {
         ok: false,
         code: 'runtime-build-missing',
-        message: `未找到业务 App 构建产物：${runtimeApp.mainEntry}`,
+        message: `未找到 reference runtime fixture 构建产物：${runtimeApp.mainEntry}`,
         fixable: true,
       };
     }
@@ -897,7 +991,7 @@ export class PlatformService {
     if (existing && existing.exitCode === null && existing.signalCode === null) {
       return {
         ok: true,
-        message: 'runtime-backed App 已在运行，Host Snapshot 已刷新。',
+        message: 'reference runtime fixture 已在运行，Host Snapshot 已刷新。',
         payload: { mode: 'external-electron', pid: existing.pid, projectRoot: runtimeApp.projectRoot },
       };
     }
@@ -937,7 +1031,7 @@ export class PlatformService {
 
     return {
       ok: true,
-      message: 'runtime-backed App 已由 Lime 应用中心启动。',
+      message: 'reference runtime fixture 已由 reference shell 启动；该路径仅用于 smoke / conformance。',
       payload: {
         mode: 'external-electron',
         pid: childProcess.pid,
@@ -950,16 +1044,18 @@ export class PlatformService {
     };
   }
 
-  private resolveRuntimeBackedApp(appId: string): { projectRoot: string; mainEntry: string; remoteDebuggingPortEnv?: string } | undefined {
+  private resolveReferenceRuntimeFixture(
+    appId: string,
+  ): { projectRoot: string; mainEntry: string; remoteDebuggingPortEnv?: string } | undefined {
     const catalogApp = this.catalog.find((item) => item.manifest.appId === appId);
-    const devRuntime = catalogApp?.devRuntime;
-    if (!catalogApp || catalogApp.manifest.installMode !== 'runtime_backed' || !devRuntime) {
+    const referenceRuntime = catalogApp?.referenceRuntime ?? catalogApp?.devRuntime;
+    if (!catalogApp || catalogApp.manifest.installMode !== 'runtime_backed' || !referenceRuntime) {
       return undefined;
     }
 
     const projectRoot =
-      (devRuntime.projectRootEnv ? process.env[devRuntime.projectRootEnv] : undefined) ??
-      (devRuntime.relativeProjectRoot ? resolve(app.getAppPath(), devRuntime.relativeProjectRoot) : undefined);
+      (referenceRuntime.projectRootEnv ? process.env[referenceRuntime.projectRootEnv] : undefined) ??
+      (referenceRuntime.relativeProjectRoot ? resolve(app.getAppPath(), referenceRuntime.relativeProjectRoot) : undefined);
 
     if (!projectRoot) {
       return undefined;
@@ -967,12 +1063,12 @@ export class PlatformService {
 
     return {
       projectRoot,
-      mainEntry: join(projectRoot, devRuntime.mainEntry ?? 'out/main/index.js'),
-      remoteDebuggingPortEnv: devRuntime.remoteDebuggingPortEnv,
+      mainEntry: join(projectRoot, referenceRuntime.mainEntry ?? 'out/main/index.js'),
+      remoteDebuggingPortEnv: referenceRuntime.remoteDebuggingPortEnv,
     };
   }
 
-  private stopRuntimeApp(appId: string): void {
+  private stopReferenceRuntimeFixture(appId: string): void {
     const childProcess = this.childProcesses.get(appId);
     if (!childProcess) {
       return;
@@ -1003,7 +1099,15 @@ export class PlatformService {
       return this.createUpdateState();
     }
     if (capability === 'lime.diagnostics') {
-      return this.getDiagnostics();
+      return {
+        ...this.getDiagnostics(),
+        agentExecution: this.agentExecution.describeRuntime(),
+      };
+    }
+    if (capability === 'lime.agentExecution') {
+      return this.agentExecution.start(input, {
+        modelSettings: this.getModelSettings(),
+      });
     }
     return undefined;
   }

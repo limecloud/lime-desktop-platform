@@ -20,19 +20,20 @@ src/renderer/
 src/shared/
 packages/contracts/
 packages/host-runtime/
+packages/host-runtime/agent-execution/
 packages/electron-adapter/
 packages/tauri-adapter/
-samples/content-studio/
-samples/zhongcao/
+samples/platform-conformance/
 ```
 
 说明：
 
 - `packages/contracts` 放 manifest、projection、readiness、bridge 和 store 的公共类型。
 - `packages/host-runtime` 放平台无关宿主逻辑。
+- `packages/host-runtime/agent-execution` 放 `AgentExecutionService`、backend router、session manager、tool registry 和 provider adapter；Claude SDK / Pi / MCP 只能出现在这一层或 sidecar 中。
 - `packages/electron-adapter` 放 Electron 主进程、preload 和 WebView 桥接。
 - `packages/tauri-adapter` 只保留后续兼容层，不阻塞 v1。
-- `samples/*` 用来承接首批 App 接入样板。
+- `samples/platform-conformance` 用来承接中性 reference fixture；真实 Product App 名称只能出现在接入文档或外部仓库，不进入平台运行时 catalog。
 
 ## 3. 开发切片
 
@@ -108,24 +109,42 @@ samples/zhongcao/
 - 设置能同步到平台壳层。
 - 云端状态和本地状态边界清晰。
 
-### P5: 首批 App 接入
+### P5: Agent Execution Runtime
 
 任务：
 
-- 接入 `content-studio`。
-- 接入 `zhongcao`。
-- 验证相同壳层下的差异化入口。
+- 参考 `craft-agents-oss` 的 backend factory / Claude SDK / Pi sidecar / session tools 设计。
+- 先落 `AgentExecutionService`、`BlockedBackend` 和 normalized event。
+- 再接 `ClaudeSdkExecutionBackend`，保持 Claude SDK 类型不进入 contracts。
+- 再接 `PiExecutionBackend` sidecar，使用 JSONL 协议隔离 Pi SDK。
+- 建立 Tool Registry，统一生成 Claude tool、Pi proxy tool 和 MCP JSON Schema。
 
 验收：
 
-- 两个 App 都能安装、启动、更新和被设置。
+- Product App 只通过 Capability SDK 调用 agent execution。
+- 缺模型、缺 OAuth、缺 billing、backend 未安装都返回 `needs-setup` 或 `blocked`。
+- Electron 和 Tauri 都可以用同一套 sidecar 协议。
+
+### P6: 首批 App 接入与 fixture
+
+任务：
+
+- 编写 `content-studio` 和 `zhongcao` 独立 Product App 接入文档。
+- 用 `samples/platform-conformance` 验证 reference fixture。
+- 验证相同平台底座下的不同 Product App 消费方式。
+
+验收：
+
+- `content-studio`、`zhongcao` 能按独立 Product App 消费平台能力。
+- `samples/platform-conformance` 能作为 fixture 安装、启动、更新和被设置。
 - 业务逻辑不需要重写平台能力。
 
-### P6: Tauri 兼容层
+### P7: Tauri 兼容层
 
 任务：
 
 - 把 Host Bridge 协议抽成可跨宿主层。
+- 把 Agent Execution sidecar 协议抽成 JSON schema。
 - 提供 Tauri adapter 草案。
 - 补充协议测试。
 
@@ -143,6 +162,8 @@ samples/zhongcao/
 - projection 测试
 - readiness 测试
 - bridge 消息测试
+- agent execution event schema 测试
+- backend router / runtime signature 测试
 
 ### 4.2 中层
 
@@ -150,12 +171,16 @@ samples/zhongcao/
 - 设置同步测试
 - OAuth 登录/退出测试
 - billing / OEM 状态投影测试
+- AgentExecutionService blocked / needs-setup / backend selected 测试
+- Tool Registry permission metadata 测试
 
 ### 4.3 高层
 
-- `content-studio` 运行测试
-- `zhongcao` 运行测试
+- Product App 接入文档审计
+- `samples/platform-conformance` fixture 运行测试
 - 开启/禁用/升级完整链路测试
+- Claude SDK backend smoke
+- Pi sidecar JSONL smoke
 
 ## 5. 风险控制
 
@@ -217,7 +242,7 @@ docs/
 3. 再验证应用中心和设置中心。
 4. 再验证 manifest、projection 和 readiness。
 5. 再验证 Host Bridge 和 App 启动链路。
-6. 最后验证 `content-studio` 和 `zhongcao` 的样板接入。
+6. 最后验证 Product App 接入文档和 `samples/platform-conformance` fixture。
 
 ## 9. 里程碑
 
@@ -252,7 +277,7 @@ docs/
 ### P3
 
 - 首个 App 可接入。
-- 第二个 App 可复用。
+- reference fixture 可证明第二个 Product App 复用路径。
 
 ### P4
 

@@ -46,7 +46,7 @@ app.whenReady().then(() => {
   const platformService = new PlatformService();
   registerIpcHandlers(platformService);
   app.once('before-quit', () => {
-    platformService.shutdownRuntimeBackedApps();
+    platformService.shutdownReferenceRuntimeFixtures();
   });
 
   app.on('browser-window-created', (_, window) => {

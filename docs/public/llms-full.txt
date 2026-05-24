@@ -1,0 +1,11 @@
+# Lime Desktop Platform Documentation
+
+This documentation describes `lime-desktop-platform`, a desktop host implementation for the Agent App standard.
+
+Core boundary:
+
+- `agentapp` is the Agent App standard source.
+- `lime-desktop-platform` implements platform-level app center, install/update lifecycle, model settings, OAuth/session, OEM/branding, billing/subscription, Host Bridge, Capability SDK adapter, Host Snapshot, and diagnostics.
+- Product Apps such as `content-studio`, `zhongcao`, and OEM apps may implement product-specific Agent App centers, but must consume platform capabilities through Host Snapshot, Capability SDK, and PlatformNavigationIntent.
+- `samples/platform-conformance` is a neutral reference fixture for conformance and smoke testing, not a core product object of `lime-desktop-platform`.
+- Runtime catalogs must not embed real Product App names as platform-owned child apps.

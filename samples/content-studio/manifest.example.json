@@ -2,7 +2,7 @@
   "appId": "content-studio",
   "displayName": "布谷AI内容工厂",
   "version": "0.1.0",
-  "installMode": "runtime_backed",
+  "installMode": "standalone",
   "entries": [
     {
       "key": "workbench",

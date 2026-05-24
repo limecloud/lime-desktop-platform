@@ -18,6 +18,7 @@ repo: lime-desktop-platform
 - [x] `platform-capabilities.md`
 - [x] `host-contracts.md`
 - [x] `architecture-diagrams.md`
+- [x] `agent-runtime-strategy.md`
 - [x] `workflow-model.md`
 - [x] `ui-blueprint.md`
 - [x] `implementation-plan.md`
@@ -44,11 +45,14 @@ repo: lime-desktop-platform
 - [x] 充值 / 订阅可用
 - [x] 更新 / 分发最小链路可用
 - [x] 运行页可用
+- [x] Agent Execution Runtime 最小 blocked / needs-setup 契约可用
+- [ ] Claude SDK backend 可用
+- [ ] Pi sidecar backend 可用
 
 ### 2.4 复用门槛
 
-- [x] `content-studio` 可作为首个样板接入
-- [x] `zhongcao` 可作为第二个样板接入
+- [x] `content-studio`、`zhongcao` 可作为独立 Product App 消费者接入文档边界
+- [x] `samples/platform-conformance` 可作为中性 reference fixture 验证平台协议
 - [x] 业务 App 不需要重复实现登录、模型和计费
 - [ ] Tauri 适配可以共用同一协议
 
@@ -78,6 +82,7 @@ repo: lime-desktop-platform
 - [x] 平台能力边界完整
 - [x] 宿主契约完整
 - [x] 架构图完整
+- [x] Agent Runtime 策略完整
 - [x] 工作流模型完整
 - [x] UI 蓝图完整
 - [x] 实施计划完整
@@ -106,11 +111,13 @@ repo: lime-desktop-platform
 - [x] 运行页可用
 - [x] 开发者页可用
 - [x] 卸载生命周期可用
+- [x] Agent Execution Runtime 最小 `BlockedBackend` 可用
+- [ ] Claude SDK / Pi backend 至少一个 smoke 通过
 
 ### 5.4 复用门槛
 
-- [x] `content-studio` 可作为首个样板接入
-- [x] `zhongcao` 可作为第二个样板接入
+- [x] `content-studio`、`zhongcao` 可作为独立 Product App 消费者接入文档边界
+- [x] `samples/platform-conformance` 可作为中性 reference fixture 验证平台协议
 - [x] 业务 App 不需要重复实现登录、模型和计费
 - [ ] Tauri 适配可以共用同一协议
 
@@ -132,7 +139,7 @@ repo: lime-desktop-platform
 - readiness 的真实阻断样例。
 - 应用中心安装与启动样例。
 - 设置同步样例。
-- `content-studio` 或 `zhongcao` 的接入样例。
+- `content-studio` / `zhongcao` 接入文档，或 `samples/platform-conformance` reference fixture。
 - Tauri 同契约适配样例。
 
 ## 8. 当前代码切片证据
@@ -141,27 +148,31 @@ repo: lime-desktop-platform
 
 - `src/shared/types.ts` 提供 manifest、projection、readiness、Host Bridge、IPC、模型设置、OAuth、OEM、billing、diagnostics 契约。
 - `src/shared/types.ts` 提供 `ReleaseArtifact`、`UpdateCandidate`、`DownloadedUpdateArtifact` 和 `ControlPlaneStatus` 契约。
-- `src/shared/types.ts` 和 contracts 包提供 `PlatformNavigationIntent`，runtime-backed App 可请求打开平台设置入口而不复制设置 UI。
-- `src/main/services/seedCatalog.ts` 只负责从 `samples/*` 通用加载开发态应用中心 fixture，不在平台核心 hard code 具体业务 App；`samples/zhongcao` 提供 GEO / STREAM / Schema / 发布 readiness 样板元数据。
-- `src/main/services/limecoreControlPlane.ts` 提供唯一 `limecore` catalog 适配边界，支持 `LIMECORE_CATALOG_URL`、`LIMECORE_BASE_URL` 和 bearer token。
+- `src/shared/types.ts` 和 contracts 包提供 `PlatformNavigationIntent`，Product App 可请求打开平台设置入口而不复制设置 UI。
+- `src/main/services/seedCatalog.ts` 只负责加载 `catalogScope: platform-conformance` 的中性开发态 fixture，不在平台核心 hard code 具体业务 App；真实产品名样板标记为 `external-product-reference` 后不会进入平台运行时 catalog。
+- `src/main/services/limecoreControlPlane.ts` 提供唯一 `limecore` catalog、OAuth、billing 和 OEM 投影适配边界，支持独立 endpoint、`LIMECORE_BASE_URL` 和 bearer token。
 - `src/main/services/releaseDownloader.ts` 提供唯一 release artifact 下载、大小校验和 sha256 校验边界。
-- `src/main/services/platformService.ts` 提供安装、启用、禁用、卸载保留数据、readiness、snapshot、capability invoke、runtime-backed 启动和设置同步的最小实现。
+- `src/main/services/platformService.ts` 提供安装、启用、禁用、reference fixture 卸载保留数据、readiness、snapshot、capability invoke、runtime bridge 和设置同步的最小实现。
+- `src/main/services/agentExecution/` 提供 `lime.agentExecution` 的最小 backend router、backend descriptor、Claude / Pi / Generic not-installed adapters、sidecar protocol skeleton、Tool Registry skeleton、blocked backend、请求归一化、模型 readiness、事件和可追溯阻断结果。
 - `src/main/services/platformStore.ts` 将工作区级事实写入 `.lime-desktop/`，将用户级配置写入 Electron `userData/state`。
 - `src/preload/index.ts` 暴露 `window.limeDesktop`，renderer 不直接访问主进程实现。
 - `src/renderer/src/App.tsx` 已有应用中心、设置中心、运行页和开发者诊断页。
+- `docs/v1/agent-runtime-strategy.md` 已完成对 `craft-agents-oss` Claude SDK、Pi sidecar、MCP session tools、LLM connection 和 token refresh 设计的分析，并明确它们在平台中只能作为 execution backend adapter。
 
 未完成：
 
-- OAuth、billing 和 OEM 仍是本地开发态投影，尚未接入 `limecore` 真实端点。
+- OAuth、billing 和 OEM 已具备 `limecore` endpoint 适配和本地 mock 验证；生产 OAuth 授权 UI、token 安全存储和真实服务错误码映射仍未完成。
 - 真实更新下载已具备 catalog + artifact + sha256 的最小链路，但还没有签名验证、包回滚和差分更新。
-- `zhongcao` 当前以本地 runtime-backed Electron App 接入，Host Snapshot 通过非敏感 runtime projection 注入，平台 capability 通过 127.0.0.1 runtime bridge 裁决；完整嵌入式 Host Bridge/WebView 仍未完成。
+- `samples/platform-conformance` 当前作为中性 runtime-backed reference fixture，覆盖 Host Snapshot、平台 capability、PlatformNavigationIntent 和 runtime bridge 的协议边界；它不代表任何真实 Product App。
+- `AgentExecutionService` 的 backend router、backend descriptor、Claude / Pi / Generic not-installed adapters、sidecar protocol skeleton、Tool Registry skeleton 和 blocked backend 已进入代码 current surface；Claude SDK backend、Pi sidecar backend、完整 Capability Tool Registry 和 Tauri sidecar adapter 的真实执行实现仍是 `proposed-current`。
 - Tauri adapter 还未创建。
 
 已验证：
 
 - `npm install` 完成，生成 `package-lock.json`。
 - `npm run verify:local` 通过，覆盖 `typecheck`、`build` 和 `smoke:electron`。
-- Electron smoke 覆盖平台 bootstrap、`content-studio` 安装、登录投影、模型设置、billing 刷新、入口启动、host snapshot 和 capability invoke。
-- Electron smoke 启动本地 mock `limecore`，覆盖 `LIMECORE_CATALOG_URL` catalog 同步、`oem-starter` 更新发现、release artifact 下载、sha256 校验、应用更新和 packageHash 写入。
-- Electron smoke 作为专项 fixture 验收覆盖 `lime.zhongcao` 安装、readiness 补齐、应用中心启动、业务窗口 preload 注入、runtime projection、runtime bridge capability 调用、平台导航意图、STREAM 五维显示、平台变化事件和卸载生命周期；平台核心只提供通用 capability 裁决，不写 GEO 草稿。
-- `npm run governance:hardcode-scan` 用于阻止 `zhongcao`、GEO 或其他业务样板硬编码回流到平台核心目录。
+- Electron smoke 覆盖平台 bootstrap、中性 conformance fixture 安装、登录投影、模型设置、billing 刷新、入口启动、host snapshot、capability invoke、平台变化事件和 fixture 卸载生命周期。
+- Electron smoke 覆盖 `lime.agentExecution` capability，确认当前返回 `blocked`、`backend=blocked` 和 normalized event，而不是伪成功。
+- Electron smoke 启动本地 mock `limecore`，覆盖 `LIMECORE_CATALOG_URL` catalog 同步、OAuth session 投影、billing 投影、OEM 投影、agentapp package release artifact 下载、sha256 校验、package 更新和 packageHash 写入。
+- Electron smoke 不再把 `content-studio`、`zhongcao` 或 OEM App 作为平台内置同名 App 安装或启动。
+- `npm run governance:hardcode-scan` 用于阻止 `zhongcao`、GEO 或其他业务样板硬编码回流到平台核心目录，并阻止 Claude SDK / Pi SDK 泄露到公开 contracts。
