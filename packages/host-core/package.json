@@ -1,0 +1,29 @@
+{
+  "name": "@limecloud/desktop-platform-host-core",
+  "version": "0.1.5",
+  "description": "Lime Desktop Platform 平台无关宿主核心契约。",
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@limecloud/desktop-platform-contracts": "0.1.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

@@ -19,8 +19,7 @@ src/preload/
 src/renderer/
 src/shared/
 packages/contracts/
-packages/host-runtime/
-packages/host-runtime/agent-execution/
+packages/host-core/
 packages/electron-adapter/
 packages/tauri-adapter/
 samples/platform-conformance/
@@ -28,9 +27,9 @@ samples/platform-conformance/
 
 说明：
 
-- `packages/contracts` 放 manifest、projection、readiness、bridge 和 store 的公共类型。
-- `packages/host-runtime` 放平台无关宿主逻辑。
-- `packages/host-runtime/agent-execution` 放 `AgentExecutionService`、backend router、session manager、tool registry 和 provider adapter；Claude SDK / Pi / MCP 只能出现在这一层或 sidecar 中。
+- `packages/contracts` 放 manifest、projection、readiness、bridge、platform settings、Product App settings 和 `lime.storage` capability 声明的公共类型。
+- `packages/host-core` 放平台无关宿主接口、settings action handler 和 Product App 设置托管边界。
+- Agent Runtime current 走 Lime App Server JSON-RPC / RuntimeCore；Electron 只实现 host-mediated bridge，不在平台仓库内新建 Pi agent 或 Claude SDK 后端。
 - `packages/electron-adapter` 放 Electron 主进程、preload 和 WebView 桥接。
 - `packages/tauri-adapter` 只保留后续兼容层，不阻塞 v1。
 - `samples/platform-conformance` 用来承接中性 reference fixture；真实 Product App 名称只能出现在接入文档或外部仓库，不进入平台运行时 catalog。
@@ -45,6 +44,7 @@ samples/platform-conformance/
 - 定义 projection / readiness / bridge message。
 - 定义本地存储分层。
 - 定义应用中心和设置的数据模型。
+- 定义 Product App 业务存储与 Product App 独特设置的边界，禁止把 `product-settings` 当业务数据库。
 
 验收：
 
@@ -100,30 +100,36 @@ samples/platform-conformance/
 任务：
 
 - 模型设置页。
+- provider 设置保存链路。
 - OAuth / 会话页。
 - OEM / 品牌页。
 - 充值 / 订阅页。
+- Product App 独特设置扩展入口和 `appId + namespace + scope` 存储。
+- 明确 Product App 独特设置只保存小型 JSON 设置，不保存草稿、历史记录、客户事实或业务表。
 
 验收：
 
 - 设置能同步到平台壳层。
 - 云端状态和本地状态边界清晰。
+- 平台基础设置不能被业务 App 私有化复制。
 
-### P5: Agent Execution Runtime
+### P5: Agent Runtime / App Server Bridge
 
 任务：
 
-- 参考 `craft-agents-oss` 的 backend factory / Claude SDK / Pi sidecar / session tools 设计。
-- 先落 `AgentExecutionService`、`BlockedBackend` 和 normalized event。
-- 再接 `ClaudeSdkExecutionBackend`，保持 Claude SDK 类型不进入 contracts。
-- 再接 `PiExecutionBackend` sidecar，使用 JSONL 协议隔离 Pi SDK。
-- 建立 Tool Registry，统一生成 Claude tool、Pi proxy tool 和 MCP JSON Schema。
+- 对齐 `/Users/coso/Documents/dev/ai/aiclientproxy/lime/internal/roadmap/appserver` 的 Lime App Server JSON-RPC method mapping。
+- 落 `AppServerRuntimeService`、`lime.agent` capability、bridge profile、App Server JSON-RPC client、配置化 stdio sidecar lifecycle 和 fail-closed normalized event。
+- 用平台 provider 设置、OAuth、billing 和权限投影裁决 readiness。
+- 把平台模型设置解析成 `AgentRuntimeContext`，provider / model 通过 `agentSession/turn/start.params.runtimeOptions.providerPreference` / `modelPreference` 传给 RuntimeCore，非敏感上下文通过 `runtimeOptions.hostOptions.desktopPlatformRuntimeContext` 传递。
+- 旧 `lime.agentExecution` 仅作为 compat alias；Pi agent / Claude SDK backend 路线和旧 `AgentExecutionService` 实现标记为 dead，不再继续实现或保留代码入口。
 
 验收：
 
-- Product App 只通过 Capability SDK 调用 agent execution。
-- 缺模型、缺 OAuth、缺 billing、backend 未安装都返回 `needs-setup` 或 `blocked`。
-- Electron 和 Tauri 都可以用同一套 sidecar 协议。
+- Product App 只通过 Capability SDK 调用 `lime.agent`。
+- 缺模型、缺 OAuth、缺 billing、App Server client 未配置或未连接都返回 `needs-setup` 或 `blocked`。
+- 生产路径不能回退 mock backend、Pi agent 或 Claude SDK。
+- Electron 和 Tauri 都可以用同一套 JSON-RPC contract。
+- packaged resources manifest 解析、sha256 校验和 mock backend 阻断已有单测；packaged-resource staging sidecar smoke 已通过，external fixture event-stream smoke 已验证 `message.delta` / `turn.completed` 通过真实 App Server JSON-RPC `agentSession/event` 推送到客户端，并验证同一 session 的 `agentSession/read` read model 能读回本轮 turn 和用户消息。Electron packaged artifact smoke 和真实 provider / RuntimeBackend live streaming 单独作为后续验收。
 
 ### P6: 首批 App 接入与 fixture
 
@@ -139,12 +145,29 @@ samples/platform-conformance/
 - `samples/platform-conformance` 能作为 fixture 安装、启动、更新和被设置。
 - 业务逻辑不需要重写平台能力。
 
+### P6.5: Product App Storage
+
+任务：
+
+- 将 `lime.storage` 从 capability 声明推进到宿主最小实现。
+- 当前桌面端先使用宿主管理的 workspace scope JSON document 后端，按 `appId + namespace + documentId` 隔离。
+- 后续再升级 per-app SQLite，支持 app storage manifest、schema、migration、索引、备份清理和审计事件。
+- Product App 只能通过 Capability SDK 读写自己的 namespace，不能拿到宿主 DB handle 或内部路径。
+
+验收：
+
+- 声明 `lime.storage` 的 App 能通过 `read` / `write` / `list` / `delete` 读写 workspace document。
+- storage runtime event 不记录业务 value，凭证类 namespace 被阻断。
+- 后续 storage manifest 可验证，migration 可重放；失败时不破坏已有业务数据。
+- `product-settings` 仍只保存轻量设置，不承接草稿、历史记录、客户事实或业务表。
+- `product-settings` 阻断凭证、token、API Key 和 OAuth 类 namespace / key；这类数据只能走 Credential Broker。
+
 ### P7: Tauri 兼容层
 
 任务：
 
 - 把 Host Bridge 协议抽成可跨宿主层。
-- 把 Agent Execution sidecar 协议抽成 JSON schema。
+- 复用 App Server JSON-RPC bridge profile、sidecar lifecycle contract 和 Host Bridge / Capability SDK contract。
 - 提供 Tauri adapter 草案。
 - 补充协议测试。
 
@@ -162,8 +185,8 @@ samples/platform-conformance/
 - projection 测试
 - readiness 测试
 - bridge 消息测试
-- agent execution event schema 测试
-- backend router / runtime signature 测试
+- agent runtime event schema 测试
+- App Server JSON-RPC bridge profile / fail-closed 测试
 
 ### 4.2 中层
 
@@ -171,16 +194,16 @@ samples/platform-conformance/
 - 设置同步测试
 - OAuth 登录/退出测试
 - billing / OEM 状态投影测试
-- AgentExecutionService blocked / needs-setup / backend selected 测试
-- Tool Registry permission metadata 测试
+- AppServerRuntimeService blocked / needs-setup / provider readiness 测试
+- Product App 设置 namespace 读写测试
 
 ### 4.3 高层
 
 - Product App 接入文档审计
 - `samples/platform-conformance` fixture 运行测试
 - 开启/禁用/升级完整链路测试
-- Claude SDK backend smoke
-- Pi sidecar JSONL smoke
+- App Server JSON-RPC bridge smoke
+- Product App 设置扩展保存 smoke
 
 ## 5. 风险控制
 

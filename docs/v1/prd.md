@@ -81,7 +81,7 @@ Lime 组织已经进入多桌面 App 并行阶段，`content-studio`、`zhongcao
 
 | 系统 | 负责什么 | 不负责什么 |
 | --- | --- | --- |
-| `agentruntime` | 任务、事件、工具、权限、artifact、evidence 等执行事实标准 | 桌面壳、品牌、登录、计费 |
+| Lime App Server JSON-RPC / RuntimeCore | `lime.agent` 的任务、事件、工具、权限、artifact、evidence 等执行事实标准 | 桌面壳、品牌、登录、计费、Product App 私有设置 |
 | `limecore` | 云端控制面、租户、OAuth 授权、应用目录、发布元数据、充值后端 | 本地宿主渲染和 App 安装执行 |
 | `lime-desktop-platform` | 本地宿主、`agentapp` 标准应用中心、projection、readiness、Host Bridge、Capability SDK adapter、模型设置、OEM 壳层、会话、桥接、平台配置 | Agent App 标准本身和业务工作流本身 |
 | 业务 App | 领域流程、页面、素材、知识、内容和专用交互 | 统一登录、模型、计费、宿主协议 |
@@ -99,7 +99,7 @@ v1 公共 UI modules 至少包含：
 - `BrandingModule`：OEM / 品牌投影。
 - `BillingModule`：充值 / 订阅投影。
 - `UpdatesModule`：agentapp package 更新与三条生命周期边界。
-- `RuntimeModule`：Host Snapshot、capability invoke 和 agent execution runtime。
+- `RuntimeModule`：Host Snapshot、capability invoke 和 `lime.agent` / App Server JSON-RPC Agent Runtime 状态。
 - `HostBridgeModule`：Host Bridge 协议诊断。
 - `DiagnosticsModule`：projection、readiness、control plane 和事件诊断。
 
@@ -168,7 +168,7 @@ v1 需要支持：
 - 视频模型配置
 - provider / protocol 选择
 - 默认值与 App 覆盖值的解析
-- 将解析后的有效配置注入给运行中的 App
+- 将解析后的非敏感有效配置注入给 App Server Runtime；Product App 只能读取投影和发送偏好，不持有 provider secret
 
 ### 5.5 OAuth / OEM / 充值
 
@@ -184,7 +184,7 @@ v1 需要支持：
 
 ### 6.1 分层原则
 
-- `agentruntime` 负责执行事实，不负责桌面 UI。
+- Lime App Server JSON-RPC / RuntimeCore 负责 `lime.agent` 执行事实，不负责桌面 UI。
 - `limecore` 负责云端控制面，不负责本地宿主渲染。
 - `lime-desktop-platform` 负责桌面公共底座，不负责业务内容创作逻辑。
 - 业务 App 只做自己的领域流程，不复制平台能力。
@@ -240,8 +240,9 @@ flowchart TB
     OEMCloud[OEM / 分发配置]
   end
 
-  subgraph Runtime[执行标准]
-    AR[agentruntime]
+  subgraph Runtime[Agent Runtime 执行事实]
+    AppServer[Lime App Server JSON-RPC]
+    RuntimeCore[RuntimeCore]
   end
 
   Shell --> Core
@@ -259,7 +260,8 @@ flowchart TB
   Auth --> Identity
   Billing --> BillingCloud
   OEMCfg --> OEMCloud
-  HostRT --> AR
+  HostRT --> AppServer
+  AppServer --> RuntimeCore
 
   Core --> CS
   Core --> ZC
@@ -368,7 +370,7 @@ v1 通过的标准不是“页面做完”，而是“平台能力可以被多�
 ## 9. 风险与约束
 
 - 最大风险是把平台又做成一个新的业务 App。
-- 第二个风险是把 `agentruntime` 和桌面宿主 runtime 混成一个概念。
+- 第二个风险是把 Lime App Server JSON-RPC / RuntimeCore 执行事实和桌面宿主 runtime 混成一个概念。
 - 第三个风险是先做 UI，后补协议，最后导致未来 Tauri 无法复用。
 - 第四个风险是把 OAuth、OEM、充值拆成 App 私有逻辑，重新制造重复代码。
 

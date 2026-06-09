@@ -223,7 +223,7 @@ export function PlatformNetworkSettingsPage(): ReactElement {
       </section>
 
       <div className="lime-network-footnote">
-        代理仅作用于 AI 模型请求（Claude CLI 子进程），不影响应用自身网络。常见端口：Clash 7890，V2Ray 10809
+        代理仅作用于 AI 模型请求和 App Server sidecar，不影响应用自身网络。常见端口：Clash 7890，V2Ray 10809
       </div>
     </div>
   );

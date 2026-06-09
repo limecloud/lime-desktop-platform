@@ -50,12 +50,14 @@ function PlatformPage(props: {
 
 主题页由本包完整承载：外观模式、颜色主题、对话字体大小和衬线体开关先维护 UI 草稿状态，真实保存后续接入宿主 host-core settings action handler。
 
-模型设置页由本包完整承载：左侧展示启用模型列表，右侧展示当前 provider 配置卡；点击“添加模型”会切换到独立供应商选择视图，覆盖推荐服务、国内服务、聚合平台、海外平台和本地模型。选择供应商后回到同一套配置卡。provider 图标参考 Lime 现有 `src/icons/providers` 图标体系并内联到本包；没有图标映射的 provider 暂不展示。当前组件只维护 UI 草稿状态，真实 provider、API Key 和默认模型保存必须由宿主 host-core action handler 接入，不能落到 Product App。
+模型设置页由本包完整承载：左侧展示启用模型列表，右侧展示当前 provider 配置卡；点击“添加模型”会切换到独立供应商选择视图，覆盖推荐服务、国内服务、聚合平台、海外平台和本地模型。配置卡支持 Provider 名称、Base URL、API 格式、认证方式、Responses API、API Key 配置状态和模型优先级。provider 图标只用于识别，不决定运行时后端。真实 provider 和默认模型保存必须由宿主 `settings.saveModel` action handler 接入；API Key 明文只进入 Credential Broker，不能落到 Product App。
+
+业务 App 独特设置由本包通过 `ProductSettingsExtension` 开放：平台设置弹窗会在“业务设置”分组里渲染 extension，并把 `settings` / `onSaveSettings` 上下文交给业务 UI。extension 只能保存自身 namespace 下的业务偏好，不能复制平台基础设置。
 
 语音模型页由本包完整承载：包含语音输入快捷键、Fn / 自定义快捷键切换、启用开关、SenseVoice Small 本地模型、安装状态、删除 / 安装模型、音频 / 视频 / 实时录音测试入口和所有转录历史。当前组件只维护 UI 草稿状态，真实快捷键注册、模型下载 / 删除、文件选择、录音权限、SenseVoice / FunASR 转写和历史持久化必须由宿主 host-core ASR action handler 接入，不能落到 Product App。
 
 搜索服务页由本包完整承载：按“已启用（拖拽排序优先级）”和“可用服务”分区展示 Tavily、Bing Search、秘塔搜索、Exa、Brave Search、SerpAPI、Serper、Google CSE 和 Firecrawl；启用卡片内直接提供 API Key 输入、获取 Key 入口，Google CSE 额外提供 `Custom Search Engine ID (cx)` 输入。当前组件只维护 UI 草稿状态，真实 API Key 加密保存、provider 健康检查、WebSearch 路由和失败回退必须由宿主 host-core search action handler / Credential Broker 接入，不能落到 Product App。
 
-网络页由本包完整承载：包含系统代理检测提示、代理服务器开关、协议 / 地址 / 端口输入、代理认证、代理白名单、模型供应商自动白名单展开项和代理地址预览。当前组件只维护 UI 草稿状态，真实系统代理检测、代理配置保存、`HTTP_PROXY` / `HTTPS_PROXY` 环境变量注入和 Claude CLI 子进程网络隔离必须由宿主 host-core settings / network action handler 接入，Product App 不能保存代理配置或覆盖系统代理。
+网络页由本包完整承载：包含系统代理检测提示、代理服务器开关、协议 / 地址 / 端口输入、代理认证、代理白名单、模型供应商自动白名单展开项和代理地址预览。当前组件只维护 UI 草稿状态，真实系统代理检测、代理配置保存、`HTTP_PROXY` / `HTTPS_PROXY` 环境变量注入和 AI 子进程网络隔离必须由宿主 host-core settings / network action handler 接入，Product App 不能保存代理配置或覆盖系统代理。
 
 关于页由本包完整承载：包含品牌 / logo 预留位、版本号、自动检查更新开关、检查更新、查看更新日志、打开日志目录和版权信息。Product App 只能传入 `about` 投影或自定义 logo 节点；真实更新检查、更新日志和日志目录打开由宿主 updater / diagnostics action handler 接入，不能落到 Product App。

@@ -8,6 +8,8 @@ import type {
   PlatformChangeEvent,
   PlatformChangeReason,
   PlatformSettings,
+  ProductAppSettingsReadInput,
+  ProductAppSettingsWriteInput,
   UninstallAppInput,
 } from '../shared/types';
 import { PlatformService } from './services/platformService';
@@ -86,6 +88,14 @@ export function registerIpcHandlers(platformService: PlatformService): void {
   ipcMain.handle(LIME_DESKTOP_IPC.settingsGetPlatform, () => platformService.getPlatformSettings());
   ipcMain.handle(LIME_DESKTOP_IPC.settingsSavePlatform, (_event, settings: PlatformSettings) =>
     withPlatformChange(platformService, 'settings-updated', {}, () => platformService.savePlatformSettings(settings)),
+  );
+  ipcMain.handle(LIME_DESKTOP_IPC.settingsReadProductApp, (_event, input: ProductAppSettingsReadInput) =>
+    platformService.readProductAppSettings(input),
+  );
+  ipcMain.handle(LIME_DESKTOP_IPC.settingsWriteProductApp, (_event, input: ProductAppSettingsWriteInput) =>
+    withPlatformChange(platformService, 'settings-updated', { appId: input.appId }, () =>
+      platformService.writeProductAppSettings(input),
+    ),
   );
 
   ipcMain.handle(LIME_DESKTOP_IPC.authGetSession, () => platformService.getAuthSession());

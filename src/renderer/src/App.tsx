@@ -8,6 +8,7 @@ import type {
   PlatformCapability,
   PlatformNavigationIntent,
   PlatformSettings,
+  ProductAppSettingsRecord,
 } from '../../shared/types';
 import {
   getAccountProjectionFromBootstrap,
@@ -18,6 +19,7 @@ import {
   platformModules,
   type PlatformModuleActionHandlers,
   type PlatformModuleKey,
+  type ProductSettingsExtension,
   type PlatformSettingsPageKey,
 } from '@limecloud/desktop-platform-react';
 
@@ -139,6 +141,8 @@ export function App(): ReactElement {
           },
           '本地模型配置已启用。',
         ),
+      saveModelSettings: (settings: ModelSettings) =>
+        runPlatformAction(() => window.limeDesktop.settings.saveModel(settings), '模型 provider 设置已保存。'),
       refreshBilling: () =>
         runPlatformAction(() => window.limeDesktop.billing.refresh(), '充值状态投影已刷新。'),
       savePlatformSettings: (settings: PlatformSettings) =>
@@ -268,7 +272,23 @@ export function App(): ReactElement {
           account={getAccountProjectionFromBootstrap(bootstrap)}
           activePage={settingsPage}
           modelSettings={getModelSettingsProjectionFromBootstrap(bootstrap)}
+          productSettings={createReferenceProductSettingsExtensions({
+            selectedAppId,
+            bootstrap,
+            onSave: (appId, value) =>
+              runPlatformAction(
+                () =>
+                  window.limeDesktop.settings.writeProductAppSettings({
+                    appId,
+                    namespace: 'reference-shell',
+                    scope: 'workspace',
+                    value,
+                  }),
+                '业务 App 独特设置已保存。',
+              ),
+          })}
           onClose={() => setSettingsOpen(false)}
+          onSaveModelSettings={(settings) => actions.saveModelSettings(settings)}
           onOpenPlatformIntent={(intent) => actions.openPlatformIntent?.(intent)}
           onSelectPage={setSettingsPage}
         />
@@ -284,6 +304,55 @@ function StatusPill(props: { label: string; value: string; tone?: 'good' | 'warn
       <strong>{props.value}</strong>
     </span>
   );
+}
+
+function createReferenceProductSettingsExtensions(input: {
+  selectedAppId?: string;
+  bootstrap: PlatformBootstrap;
+  onSave: (appId: string, value: Record<string, unknown>) => Promise<ProductAppSettingsRecord>;
+}): ProductSettingsExtension[] {
+  const appId = input.selectedAppId ?? input.bootstrap.catalog[0]?.manifest.appId ?? 'reference-agent-app';
+  return [
+    {
+      key: 'reference-shell',
+      label: '示例业务设置',
+      description: '业务 App 独特偏好由平台托管到独立 namespace，不进入通用设置。',
+      appId,
+      namespace: 'reference-shell',
+      scope: 'workspace',
+      render: ({ onSaveSettings }) => (
+        <div className="lime-reference-product-settings">
+          <div className="lime-settings-projection-grid">
+            <div className="lime-settings-projection-row">
+              <span>业务 App</span>
+              <strong>{appId}</strong>
+            </div>
+            <div className="lime-settings-projection-row">
+              <span>存储 namespace</span>
+              <strong>reference-shell / workspace</strong>
+            </div>
+            <div className="lime-settings-projection-row">
+              <span>平台基础设置</span>
+              <strong>账号、模型、网络、搜索、数据、安全等仍归平台页</strong>
+            </div>
+          </div>
+          <button
+            className="lime-model-save-button"
+            type="button"
+            onClick={() =>
+              void (onSaveSettings ?? ((value: Record<string, unknown>) => input.onSave(appId, value)))({
+                reviewCadence: 'daily',
+                preferredWorkspaceView: 'board',
+              })
+            }
+          >
+            保存示例业务偏好
+          </button>
+        </div>
+      ),
+      onSaveSettings: (value) => input.onSave(appId, value),
+    },
+  ];
 }
 
 function createLocalModelSettings(settings: ModelSettings): ModelSettings {

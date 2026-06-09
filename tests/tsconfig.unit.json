@@ -1,0 +1,29 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "noEmit": false,
+    "outDir": "../.tmp/unit-tests",
+    "rootDir": "..",
+    "types": ["node"],
+    "jsx": "react-jsx"
+  },
+  "include": [
+    "../src/shared/**/*.ts",
+    "../src/main/services/appServerJsonRpcClient.ts",
+    "../src/main/services/appServerRuntimeService.ts",
+    "../src/main/services/capabilityEventPayload.ts",
+    "../src/main/services/credentialBroker.ts",
+    "../src/main/services/limecoreControlPlane.ts",
+    "../src/main/services/modelSettingsCredentials.ts",
+    "../src/main/services/platformService.ts",
+    "../src/main/services/platformStore.ts",
+    "../src/main/services/releaseDownloader.ts",
+    "../src/main/services/runtimeBridgeServer.ts",
+    "../src/main/services/seedCatalog.ts",
+    "../src/main/services/sensitiveRedaction.ts",
+    "../packages/react/src/index.tsx",
+    "./unit/**/*.test.ts"
+  ]
+}

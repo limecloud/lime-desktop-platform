@@ -4,7 +4,7 @@
 
 它只包含类型和协议常量，不包含 Electron 主进程实现，也不包含业务 App 逻辑。
 
-Claude SDK、Pi SDK 和 MCP SDK 不属于公开 contracts。后续 agent execution 能力必须先归一化为平台 `AgentExecutionService` / Capability SDK 语义，再进入 contracts。
+Pi agent、Claude SDK 和 MCP SDK 不属于公开 contracts，也不再作为平台 current/proposed 后端路线。Agent Runtime 能力必须先归一化为平台 `lime.agent` / App Server JSON-RPC / Capability SDK 语义，再进入 contracts。
 
 ## 使用
 
@@ -14,8 +14,11 @@ import type {
   HostSnapshot,
   PlatformNavigationIntent,
   PlatformCapability,
-  AgentExecutionRequest,
-  AgentExecutionResult,
+  AgentRuntimeContext,
+  AgentRuntimeModelProfile,
+  AgentRuntimeRequest,
+  AgentRuntimeResult,
+  ProductAppSettingsRecord,
   ReleaseArtifact,
   RuntimeBridgeDescriptor,
   UpdateCandidate,
@@ -49,5 +52,11 @@ const stop = window.limeDesktop.platform.onChanged((event) => {
 - `apps.uninstall({ appId, keepData: true })` 默认只移除 agentapp package 安装记录和 runtime snapshot，业务数据安全删除另走显式流程。
 - `ReleaseArtifact`、`UpdateCandidate` 和 `DownloadedUpdateArtifact` 只描述 `targetKind: 'agentapp-package'` 的 package 更新事实；业务 App 不直接下载、校验或应用 release 包。
 - `PlatformNavigationIntent` 只表达“请宿主打开某个设置/诊断入口”，业务 App 不复制平台设置 UI。
-- Agent execution 只允许通过 `lime.agentExecution` capability 调用；业务 App 不直接 import Claude SDK、Pi SDK 或平台内部 session manager。
-- `AgentExecutionResult` 当前允许返回 `blocked` / `needs-setup`，用于表达 backend 尚未安装、模型未配置或 entitlement 不满足；调用方不得把 blocked 伪装成成功。
+- 平台基础设置由 `lime-desktop-platform` 实现；业务 App 独特设置只能通过 `ProductAppSettingsRecord` 的 `appId + namespace + scope` 进入独立 namespace。
+- `ProductAppSettingsRecord` 只承接轻量设置值，不是业务数据库。Product App 的日记、草稿、客户事实和工作流状态通过 `lime.storage` 能力进入宿主管理的 per-app storage；当前桌面宿主提供 workspace scope JSON document 最小实现，schema migration / SQLite backend 后续接入。
+- Agent Runtime 只允许通过 current `lime.agent` capability 调用；`lime.agentExecution` 仅是 compat alias。业务 App 不直接 import Pi agent、Claude SDK 或平台内部 session manager。
+- 模型设置由平台设置中心保存，但执行时通过 Desktop Host 解析成 host-mediated `AgentRuntimeContext` / `AgentRuntimeModelProfile` 交给 Lime App Server JSON-RPC / RuntimeCore；业务 App 不直接传 provider 配置、billing、OAuth 或平台设置副本。
+- `AgentRuntimeModelProfile` 只包含非敏感 provider/model 投影：`settingsVersion`、provider id / protocol / authType / baseUrl / useResponsesApi / capabilityKinds、modelId / requestedModelId、capability 和凭证配置状态。
+- 密钥只允许通过 `credentialRef` 表达，resolver 固定为 `desktop-host-credential-broker`。当前 Desktop Host 已有最小本地 Credential Broker，能把设置页输入的 API Key / OAuth secret 从普通 `ModelSettings` JSON 中剔除并加密保存；JSON-RPC payload 仍只传 configured/ref 形状，后续 live provider 执行需要接入 App Server 自身 `modelProvider*` 数据源或 host credential resolver，不能把明文 API Key、OAuth token、refresh token 或 secret 放进 `AgentRuntimeContext`、Host Snapshot、Product App 设置、runtime event 或 turn payload。
+- `AgentRuntimeResult` 当前允许返回 `blocked` / `needs-setup`，用于表达 App Server client 尚未连接、模型未配置或 entitlement 不满足；调用方不得把 blocked 伪装成成功。
+- App Server client 未配置、未连接或握手失败时，fail-closed `blocked` result 仍携带同一份非敏感 `runtimeContext`，用于证明 JSON-RPC handoff 形状稳定。

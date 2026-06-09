@@ -36,6 +36,8 @@ export type PlatformCapability =
   | 'lime.download'
   | 'lime.permissions'
   | 'lime.diagnostics'
+  | 'lime.storage'
+  | 'lime.agent'
   | 'lime.agentExecution';
 
 export interface DesktopAppEntry {
@@ -210,17 +212,69 @@ export interface ModelProviderConfig {
   capabilityKinds: ModelCapabilityKind[];
   enabled: boolean;
   apiKeyConfigured: boolean;
+  /**
+   * 只允许作为 settings.saveModel 的临时输入，由 Desktop Host 写入 Credential Broker。
+   * 宿主持久化 ModelSettings、Host Snapshot、runtimeContext 和 Product App projection 时必须剔除。
+   */
+  apiKey?: string;
+  authType?: 'api-key' | 'oauth' | 'none';
   baseUrl?: string;
+  useResponsesApi?: boolean;
   models: string[];
 }
 
 export interface ModelSettings {
   version: string;
   updatedAt: string;
+  defaultAgentProviderId?: string;
   defaultTextModelId?: string;
   defaultImageModelId?: string;
   defaultVideoModelId?: string;
   providers: ModelProviderConfig[];
+}
+
+export type ModelProviderCredentialStorageKind = 'none' | 'local-encrypted-file';
+export type ModelProviderCredentialRuntimeStatus =
+  | 'not-required'
+  | 'missing'
+  | 'rotation-required'
+  | 'broker-reference-only'
+  | 'app-server-provider-ready'
+  | 'resolver-ready';
+
+export type ModelProviderAppServerSyncStatus = 'synced' | 'failed' | 'unsupported';
+
+export interface ModelProviderAppServerSyncRecord {
+  desktopProviderId: string;
+  status: ModelProviderAppServerSyncStatus;
+  appServerProviderId?: string;
+  appServerProviderType?: string;
+  appServerProviderName?: string;
+  apiHost?: string;
+  settingsVersion?: string;
+  syncedAt?: string;
+  credentialSyncedAt?: string;
+  lastError?: string;
+  plaintextSecrets: false;
+}
+
+export interface ModelProviderCredentialState {
+  providerId: string;
+  authType: NonNullable<ModelProviderConfig['authType']>;
+  configured: boolean;
+  storageKind: ModelProviderCredentialStorageKind;
+  keychainBacked: boolean;
+  updatedAt?: string;
+  expiresAt?: string;
+  rotationRequired: boolean;
+  runtimeStatus: ModelProviderCredentialRuntimeStatus;
+  appServerProviderId?: string;
+  appServerProviderType?: string;
+  appServerSyncStatus?: ModelProviderAppServerSyncStatus;
+  appServerSyncedAt?: string;
+  appServerCredentialSyncedAt?: string;
+  appServerSyncError?: string;
+  plaintextSecrets: false;
 }
 
 export interface CloudSessionSnapshot {
@@ -268,6 +322,80 @@ export interface PlatformSettings {
   };
   developerMode: boolean;
 }
+
+export type ProductAppSettingsScope = 'user' | 'workspace';
+
+export interface ProductAppSettingsRecord<TValue = Record<string, unknown>> {
+  appId: string;
+  namespace: string;
+  scope: ProductAppSettingsScope;
+  version: string;
+  updatedAt: string;
+  value: TValue;
+}
+
+export interface ProductAppSettingsReadInput {
+  appId: string;
+  namespace: string;
+  scope?: ProductAppSettingsScope;
+}
+
+export interface ProductAppSettingsWriteInput<TValue = Record<string, unknown>> extends ProductAppSettingsReadInput {
+  value: TValue;
+}
+
+export type AppStorageScope = 'workspace';
+
+export interface AppStorageDocument<TValue = Record<string, unknown>> {
+  appId: string;
+  namespace: string;
+  scope: AppStorageScope;
+  documentId: string;
+  version: string;
+  createdAt: string;
+  updatedAt: string;
+  value: TValue;
+}
+
+export interface AppStorageReadInput {
+  appId: string;
+  namespace: string;
+  documentId: string;
+  scope?: AppStorageScope;
+}
+
+export interface AppStorageWriteInput<TValue = Record<string, unknown>> extends AppStorageReadInput {
+  value: TValue;
+}
+
+export interface AppStorageListInput {
+  appId: string;
+  namespace: string;
+  scope?: AppStorageScope;
+}
+
+export interface AppStorageDeleteInput extends AppStorageReadInput {}
+
+export interface AppStorageListResult {
+  appId: string;
+  namespace: string;
+  scope: AppStorageScope;
+  documents: Array<{
+    documentId: string;
+    version: string;
+    updatedAt: string;
+  }>;
+}
+
+export interface AppStorageDeleteResult {
+  appId: string;
+  namespace: string;
+  scope: AppStorageScope;
+  documentId: string;
+  deleted: boolean;
+}
+
+export type AppStorageOperation = 'read' | 'write' | 'list' | 'delete';
 
 export interface UpdateCandidate {
   targetKind: UpdateTargetKind;
@@ -325,6 +453,250 @@ export interface RuntimeEvent {
   payload?: unknown;
 }
 
+export type AgentRuntimeBridgeKind = 'app-server-json-rpc';
+export type AgentRuntimeBridgeTransport = 'host-mediated';
+export type AgentRuntimeState = 'ready' | 'needs-setup' | 'blocked' | 'started' | 'completed' | 'failed' | 'canceled';
+export type AppServerJsonRpcMethod =
+  | 'initialize'
+  | 'initialized'
+  | 'agentSession/start'
+  | 'agentSession/read'
+  | 'agentSession/turn/start'
+  | 'agentSession/turn/cancel'
+  | 'agentSession/action/respond'
+  | 'capability/list'
+  | 'artifact/read'
+  | 'evidence/export'
+  | 'agentSession/event'
+  | 'modelProvider/list'
+  | 'modelProvider/read'
+  | 'modelProvider/create'
+  | 'modelProvider/update'
+  | 'modelProviderKey/create';
+
+export type AgentRuntimeEventType =
+  | 'started'
+  | 'message.delta'
+  | 'tool.call'
+  | 'tool.result'
+  | 'action.required'
+  | 'needs-setup'
+  | 'blocked'
+  | 'completed'
+  | 'failed'
+  | 'canceled';
+
+export interface AgentRuntimeBridgeProfile {
+  kind: AgentRuntimeBridgeKind;
+  transport: AgentRuntimeBridgeTransport;
+  hostBoundary: 'desktop-host-ipc';
+  runtimeOwner: 'runtime-core';
+  protocolVersion: 'appserver.v0';
+  methods: {
+    initialize: 'initialize';
+    initialized: 'initialized';
+    startSession: 'agentSession/start';
+    readSession: 'agentSession/read';
+    startTurn: 'agentSession/turn/start';
+    cancelTurn: 'agentSession/turn/cancel';
+    respondAction: 'agentSession/action/respond';
+    listCapabilities: 'capability/list';
+    readArtifact: 'artifact/read';
+    exportEvidence: 'evidence/export';
+    events: 'agentSession/event';
+  };
+  events: {
+    notification: 'agentSession/event';
+    allowUiSynthesis: false;
+  };
+}
+
+export type AgentRuntimeContextSource = 'desktop-platform-model-settings';
+
+export interface AgentRuntimeCredentialRef {
+  kind: 'model-provider';
+  providerId: string;
+  authType: NonNullable<ModelProviderConfig['authType']>;
+  resolver: 'desktop-host-credential-broker';
+  configured: boolean;
+  storageKind: ModelProviderCredentialStorageKind;
+  keychainBacked: boolean;
+  updatedAt?: string;
+  expiresAt?: string;
+  rotationRequired: boolean;
+  runtimeStatus: ModelProviderCredentialRuntimeStatus;
+  productionInjectionReady: boolean;
+}
+
+export interface AgentRuntimeProviderProfile {
+  id: string;
+  appServerProviderId?: string;
+  protocol: ModelProtocol;
+  authType: NonNullable<ModelProviderConfig['authType']>;
+  baseUrl?: string;
+  useResponsesApi?: boolean;
+  capabilityKinds: ModelCapabilityKind[];
+  credentialConfigured: boolean;
+  credentialRef?: AgentRuntimeCredentialRef;
+}
+
+export interface AgentRuntimeModelProfile {
+  settingsVersion: string;
+  provider: AgentRuntimeProviderProfile;
+  modelId: string;
+  requestedModelId?: string;
+  capability: 'text' | 'agent' | 'vision';
+}
+
+export interface AgentRuntimeContext {
+  protocol: 'appserver.runtimeContext';
+  version: 1;
+  source: AgentRuntimeContextSource;
+  modelProfile?: AgentRuntimeModelProfile;
+  permissionMode: 'safe' | 'ask' | 'allow-all';
+  credentialPolicy: {
+    handoff: 'credential-ref-only';
+    plaintextSecrets: false;
+    resolver: 'desktop-host-credential-broker';
+    runtimeStatus: ModelProviderCredentialRuntimeStatus;
+    productionInjectionReady: boolean;
+  };
+}
+
+export interface AppServerRuntimeHostOptions {
+  desktopPlatformRuntimeContext: AgentRuntimeContext;
+}
+
+export interface AppServerRuntimeOptionsMetadata {
+  workflowId?: string;
+  requestedModelId?: string;
+  permissionMode?: 'safe' | 'ask' | 'allow-all';
+}
+
+export interface AppServerRuntimeOptionsProjection {
+  capabilityId?: string;
+  stream: true;
+  providerPreference?: string;
+  modelPreference?: string;
+  metadata?: AppServerRuntimeOptionsMetadata;
+  hostOptions: AppServerRuntimeHostOptions;
+}
+
+export interface AgentRuntimeAttachment {
+  kind: 'text' | 'image' | 'file';
+  ref: string;
+  mimeType?: string;
+}
+
+export interface AgentRuntimeRequest {
+  appId: string;
+  entryKey: string;
+  agentAppId?: string;
+  taskId?: string;
+  prompt: string;
+  attachments?: AgentRuntimeAttachment[];
+  runtimeOptions?: {
+    capabilityId?: string;
+    workflowId?: string;
+    modelId?: string;
+    permissionMode?: 'safe' | 'ask' | 'allow-all';
+  };
+  modelPolicy?: {
+    preferredModelId?: string;
+    capability: 'text' | 'agent' | 'vision';
+  };
+  runtimeContext?: AgentRuntimeContext;
+  toolPolicy?: {
+    allowedToolIds?: string[];
+    permissionMode?: 'safe' | 'ask' | 'allow-all';
+  };
+}
+
+export interface AgentRuntimeEvent {
+  sessionId: string;
+  threadId?: string;
+  turnId?: string;
+  sequence: number;
+  type: AgentRuntimeEventType;
+  method?: AppServerJsonRpcMethod;
+  payload: unknown;
+  evidence?: Array<{
+    label: string;
+    ref: string;
+  }>;
+}
+
+export interface AppServerAgentSession {
+  sessionId: string;
+  threadId: string;
+  appId: string;
+  workspaceId?: string;
+  status?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface AppServerAgentTurn {
+  turnId: string;
+  sessionId: string;
+  threadId: string;
+  status?: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface AgentRuntimeResult {
+  ok: boolean;
+  state: AgentRuntimeState;
+  sessionId: string;
+  threadId?: string;
+  turnId?: string;
+  bridge: AgentRuntimeBridgeKind;
+  message: string;
+  readiness: ReadinessResult;
+  request: AgentRuntimeRequest;
+  runtimeContext: AgentRuntimeContext;
+  bridgeProfile: AgentRuntimeBridgeProfile;
+  events: AgentRuntimeEvent[];
+  appServer?: {
+    session?: AppServerAgentSession;
+    turn?: AppServerAgentTurn;
+  };
+}
+
+export type AppServerRuntimeClientState = 'connected' | 'not-configured' | 'disconnected';
+
+export interface AppServerRuntimeDiagnostics {
+  state: AgentRuntimeState;
+  currentCapability: 'lime.agent';
+  compatCapabilities: ['lime.agentExecution'];
+  bridgeProfile: AgentRuntimeBridgeProfile;
+  readiness: ReadinessResult;
+  runtimeContext: AgentRuntimeContext;
+  modelProvider: {
+    defaultProviderId?: string;
+    defaultTextModelId?: string;
+    enabledProviders: Array<{
+      id: string;
+      displayName: string;
+      protocol: ModelProtocol;
+      authType?: ModelProviderConfig['authType'];
+      apiKeyConfigured: boolean;
+      credentialState: ModelProviderCredentialState;
+      appServerProviderId?: string;
+      appServerSyncStatus?: ModelProviderAppServerSyncStatus;
+      useResponsesApi?: boolean;
+      models: string[];
+    }>;
+  };
+  client: {
+    connected: boolean;
+    state: AppServerRuntimeClientState;
+    transport: 'stdio';
+    hostBoundary: 'desktop-host-ipc';
+  };
+}
+
 export interface DiagnosticSnapshot {
   storage: {
     workspaceRoot: string;
@@ -339,6 +711,7 @@ export interface DiagnosticSnapshot {
   };
   hostProfile: HostProfile;
   controlPlane: ControlPlaneStatus;
+  appServerRuntime: AppServerRuntimeDiagnostics;
   lastEvents: RuntimeEvent[];
 }
 
@@ -413,64 +786,6 @@ export interface CapabilityInvokeResult {
   event: RuntimeEvent;
 }
 
-export type AgentExecutionBackendKind = 'blocked' | 'generic-text' | 'claude-sdk' | 'pi-sidecar';
-export type AgentExecutionState = 'needs-setup' | 'blocked' | 'started' | 'completed' | 'failed';
-export type AgentExecutionEventType =
-  | 'started'
-  | 'assistant-delta'
-  | 'tool-call'
-  | 'tool-result'
-  | 'permission-request'
-  | 'needs-setup'
-  | 'blocked'
-  | 'completed'
-  | 'failed';
-
-export interface AgentExecutionAttachment {
-  kind: 'text' | 'image' | 'file';
-  ref: string;
-  mimeType?: string;
-}
-
-export interface AgentExecutionRequest {
-  appId: string;
-  entryKey: string;
-  agentAppId?: string;
-  taskId?: string;
-  prompt: string;
-  attachments?: AgentExecutionAttachment[];
-  modelPolicy?: {
-    preferredModelId?: string;
-    capability: 'text' | 'agent' | 'vision';
-  };
-  toolPolicy?: {
-    allowedToolIds?: string[];
-    permissionMode?: 'safe' | 'ask' | 'allow-all';
-  };
-}
-
-export interface AgentExecutionEvent {
-  sessionId: string;
-  sequence: number;
-  type: AgentExecutionEventType;
-  payload: unknown;
-  evidence?: Array<{
-    label: string;
-    ref: string;
-  }>;
-}
-
-export interface AgentExecutionResult {
-  ok: boolean;
-  state: AgentExecutionState;
-  sessionId: string;
-  backend: AgentExecutionBackendKind;
-  message: string;
-  readiness: ReadinessResult;
-  request: AgentExecutionRequest;
-  events: AgentExecutionEvent[];
-}
-
 export type PlatformNavigationTarget =
   | 'app-center'
   | 'auth-settings'
@@ -540,6 +855,8 @@ export interface LimeDesktopHostApi {
     saveModel: (settings: ModelSettings) => Promise<ModelSettings>;
     getPlatform: () => Promise<PlatformSettings>;
     savePlatform: (settings: PlatformSettings) => Promise<PlatformSettings>;
+    readProductAppSettings: (input: ProductAppSettingsReadInput) => Promise<ProductAppSettingsRecord>;
+    writeProductAppSettings: (input: ProductAppSettingsWriteInput) => Promise<ProductAppSettingsRecord>;
   };
   auth: {
     getSession: () => Promise<CloudSessionSnapshot>;

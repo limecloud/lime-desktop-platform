@@ -8,307 +8,269 @@ repo: lime-desktop-platform
 
 ## 1. 结论
 
-`/Users/coso/Documents/dev/js/craft-agents-oss` 的 Claude SDK 和 Pi 实践值得参考，但不能照搬到 `lime-desktop-platform`。它是面向 Craft 文档和编码会话的完整产品实现，里面有大量产品内 source、automation、workspace、feedback、文档工具和会话 UI 逻辑。`lime-desktop-platform` 需要吸收的是运行时工程模式，不是业务形态。
+`lime-desktop-platform` 的 Agent Runtime current 路线是接入 Lime App Server JSON-RPC / RuntimeCore，而不是在桌面平台内继续实现 Pi agent 或 Claude SDK backend。
 
-后续事实源关系必须保持不变：
+事实源关系：
 
-- `agentapp` 是 Agent App / 应用中心标准事实源。
-- `lime-desktop-platform` 是桌面宿主、公共能力和 Agent Execution Runtime 的实现方。
-- `content-studio`、`zhongcao`、OEM App 是独立 Product App，只消费平台能力，不直接依赖 Claude SDK、Pi SDK 或平台内部 session manager。
-- Claude SDK、Pi、MCP session tools 都只能作为 `host-core` 后面的可插拔 execution backend / tool backend。
-- runtime-backed reference shell 只服务 conformance / smoke，不代表 Product App 生产运行模型。
+- `/Users/coso/Documents/dev/ai/aiclientproxy/lime/internal/roadmap/appserver` 是 App Server JSON-RPC / RuntimeCore 路线图事实源。
+- `/Users/coso/Documents/dev/ai/limecloud/agentapp` 是 Agent App / 应用中心标准事实源。
+- `lime-desktop-platform` 是桌面宿主、公共能力、设置中心和 App Server bridge 的实现方。
+- Product App 只消费 Host Snapshot、Capability SDK、`PlatformNavigationIntent` 和平台设置投影。
+- Pi agent、Claude SDK 和 MCP SDK 不进入公开 contracts，也不再作为 current/proposed backend 路线。
 
-一句话：平台要抽象的是 `AgentExecutionService`，不是把某个 SDK 直接暴露给业务 App。
+一句话：平台要实现的是 `lime.agent` 到 App Server JSON-RPC 的 host-mediated bridge，不是在 Electron 主进程里再造第二套 Agent 后端。
 
-## 2. craft-agents-oss 可吸收模式
-
-| 来源 | 做法 | 对平台的价值 | 平台采纳方式 |
-| --- | --- | --- | --- |
-| `packages/shared/src/agent/backend/types.ts` | 统一 `AgentBackend` 接口，所有 backend 输出同一种事件流。 | Product App 不关心 provider 差异。 | 建立平台级 `AgentExecutionBackend`，统一 `start / send / abort / event / dispose`。 |
-| `packages/shared/src/agent/backend/factory.ts` | LLM connection 先解析 provider、auth、model，再选择 backend。 | 模型设置和执行后端解耦。 | `lime.modelSettings` 仍是模型事实源，execution router 只消费解析结果。 |
-| `packages/shared/src/agent/claude-agent.ts` | Claude SDK `query()`、MCP server、PreToolUse hook、resume/fork、permission hook。 | Claude Code / Claude Agent 能力可作为高阶 agent backend。 | 做成 `ClaudeSdkExecutionBackend`，事件归一化后再给平台 session。 |
-| `packages/shared/src/agent/pi-agent.ts` | Pi 通过子进程 JSONL 通信，主进程只管协议、事件队列、权限和 proxy tool。 | 隔离 ESM、重依赖、运行时崩溃和 bundling 风险。 | Pi 默认作为 sidecar backend，不进入 renderer，也不污染 Product App。 |
-| `packages/pi-agent-server/src/index.ts` | 子进程持有 Pi SDK、auth storage、model registry、tool allowlist、token update。 | 多 provider / custom endpoint 可以在独立进程内演进。 | 平台定义 JSONL/HTTP sidecar 协议，Electron 和 Tauri 都可复用。 |
-| `packages/session-tools-core/src/tool-defs.ts` | Zod schema 是 session tool 单一事实源，再转 Claude tool / MCP JSON Schema / Pi proxy tool。 | 同一工具集可供不同 backend 使用。 | 平台建立 Capability Tool Registry，工具 schema 不跟某个 backend 绑定。 |
-| `packages/session-mcp-server/src/index.ts` | session-scoped MCP server 通过 stdio 暴露工具，用 callback 回到主进程。 | 后端可用标准 MCP 接入 session 工具。 | 产品工具、平台设置、OAuth 触发、诊断工具统一走 session-scoped tool bridge。 |
-| `packages/shared/src/auth/state.ts` | token refresh mutex，保守清理失效凭据。 | 防止并发刷新和半成功认证状态。 | OAuth / 模型凭据仍由平台 credential boundary 管理，backend 只拿短期投影。 |
-| `packages/shared/src/config/llm-connections.ts` | providerType、authType、custom endpoint、model list、image capability 分离。 | 支持 OpenAI-compatible、Anthropic-compatible、本地模型、OAuth 等差异。 | 平台模型设置需要引入 provider / auth / protocol / capability 四层模型。 |
-| `packages/server-core/src/sessions/runtime-config.ts` | runtime config signature 决定热更新还是重启 backend。 | 切模型、切 endpoint、切凭据时避免 stale subprocess。 | 平台 session runtime 要有 `runtimeSignature`，漂移时安全重建。 |
-
-## 3. 目标架构
+## 2. Current 架构
 
 ```mermaid
 flowchart TB
   subgraph Product[独立 Product App]
     UI[业务页面]
-    Center[产品内 agentapp 应用中心]
-    SDK[Capability SDK adapter]
+    SDK[Capability SDK]
+    Extension[业务独特设置 Extension]
   end
 
-  subgraph Platform[lime-desktop-platform host-core]
-    Snapshot[Host Snapshot]
+  subgraph Platform[lime-desktop-platform]
+    Settings[平台设置中心]
+    Providers[Model Provider Settings]
+    Store[PlatformStore]
     CapRouter[Capability Router]
-    AgentExec[AgentExecutionService]
-    SessionMgr[AgentSessionManager]
-    BackendRouter[ExecutionBackendRouter]
-    ToolRegistry[Capability Tool Registry]
-    Permission[Permission / Readiness Policy]
-    Credential[Credential Broker]
-    ModelSettings[Model Settings Resolver]
+    Runtime[AppServerRuntimeService]
+    Bridge[Desktop Host IPC / Preload]
   end
 
-  subgraph Backends[Execution Backends]
-    Claude[ClaudeSdkExecutionBackend]
-    Pi[PiExecutionBackend sidecar]
-    Generic[GenericTextBackend]
-    Blocked[BlockedBackend]
-  end
-
-  subgraph Tools[Tool Backends]
-    SessionTools[session-scoped tools]
-    MCP[MCP client pool]
-    ProductTools[Product capability tools]
+  subgraph AppServer[Lime App Server]
+    JsonRpc[JSON-RPC]
+    RuntimeCore[RuntimeCore]
+    Tools[Tool / Permission / Artifact]
   end
 
   UI --> SDK
-  Center --> SDK
+  Extension --> Settings
   SDK --> CapRouter
-  CapRouter --> AgentExec
-  Snapshot --> SDK
-  AgentExec --> SessionMgr
-  SessionMgr --> BackendRouter
-  BackendRouter --> Claude
-  BackendRouter --> Pi
-  BackendRouter --> Generic
-  BackendRouter --> Blocked
-  AgentExec --> ToolRegistry
-  ToolRegistry --> SessionTools
-  ToolRegistry --> MCP
-  ToolRegistry --> ProductTools
-  AgentExec --> Permission
-  AgentExec --> Credential
-  AgentExec --> ModelSettings
+  Settings --> Providers
+  Settings --> Store
+  CapRouter --> Runtime
+  Runtime --> Bridge
+  Bridge --> JsonRpc
+  JsonRpc --> RuntimeCore
+  RuntimeCore --> Tools
 ```
 
 设计重点：
 
-- Product App 只看到 `Capability SDK`、`Host Snapshot` 和事件，不看到 Claude SDK / Pi SDK。
-- `AgentExecutionService` 是平台 current surface；Claude SDK / Pi 是 adapter。
-- 工具 schema、权限策略、模型设置、OAuth、billing 都在平台侧裁决。
-- 事件流必须归一化，业务 UI 不根据 provider 写分支。
-- Tauri 不需要复制业务协议；Rust adapter 只替换宿主通信和 sidecar 管理。
+- current capability 是 `lime.agent`。
+- `lime.agentExecution` 只作为 deprecated compat alias。
+- `agentRuntime.bridge.kind` 固定为 `app-server-json-rpc`。
+- Electron 只负责 Desktop Host IPC、preload 白名单、sidecar 生命周期和状态投影。
+- App Server client 已有最小 JSON-RPC / stdio sidecar lifecycle；未配置、未连接或握手失败时必须 fail closed，返回 `blocked` 或 `needs-setup`，不能回退 mock、Pi agent 或 Claude SDK。
 
-## 4. Provider 选择策略
+## 3. JSON-RPC Method Mapping
 
-| backend | 适用场景 | 不适用场景 | 初期状态 |
-| --- | --- | --- | --- |
-| `ClaudeSdkExecutionBackend` | Claude Code / Claude Agent 风格任务、工具调用、会话恢复、MCP 工具、Claude 原生能力。 | 非 Claude provider 被硬塞进 Claude SDK；纯文本生成；图片 / 视频生成。 | P2 接入。 |
-| `PiExecutionBackend` | 多 provider agent loop、OpenAI / Copilot / Bedrock / custom endpoint、需要统一工具调用和模型路由。 | 简单 prompt completion；对运行隔离要求极低的本地小任务。 | P3 接入，默认 sidecar。 |
-| `GenericTextBackend` | 简单文本生成、标题、摘要、低风险 structured output。 | 复杂会话、工具权限、文件操作、MCP、多轮恢复。 | P1 可先做 blocked / mock / generic。 |
-| `BlockedBackend` | 缺 OAuth、缺模型、缺 entitlement、policy 拒绝、backend 未安装。 | 不应伪装成功。 | P0 即需要。 |
+`AppServerRuntimeService` 当前 profile：
 
-`content-studio` 当前已有自己的文本、图片、视频生成边界；迁移到平台时不能把图片 / 视频塞进 Claude SDK 或 Pi。平台需要按 capability 分路：agent execution 是 agent loop，media generation 是另一组 provider capability。
+| 平台语义 | App Server JSON-RPC method |
+| --- | --- |
+| initialize | `initialize` |
+| initialized | `initialized` |
+| startSession | `agentSession/start` |
+| readSession | `agentSession/read` |
+| startTurn | `agentSession/turn/start` |
+| cancelTurn | `agentSession/turn/cancel` |
+| respondAction | `agentSession/action/respond` |
+| listCapabilities | `capability/list` |
+| readArtifact | `artifact/read` |
+| exportEvidence | `evidence/export` |
+| events | `agentSession/event` |
 
-## 5. 进程边界
+事件归一化：
 
-### 5.1 Electron
+- `message.delta`
+- `tool.call`
+- `tool.result`
+- `action.required`
+- `needs-setup`
+- `blocked`
+- `completed`
+- `failed`
+- `canceled`
+
+## 4. Provider 设置边界
+
+平台设置中心是 provider 设置事实源，Product App 不复制 provider 设置 UI。
+
+模型设置到 App Server 的传递链路必须是 host-mediated：
+
+1. Product App 只发起 `lime.agent` capability 请求，可携带任务、附件、`modelPolicy.preferredModelId`、`runtimeOptions.modelId` 和 `permissionMode`。
+2. Desktop Host 从平台设置中心读取当前 `ModelSettings`，解析 enabled provider、目标 model、capability 和权限模式。
+3. Desktop Host 在 `settings.saveModel` 保存路径做受控 provisioning：把非敏感 provider metadata 写入 App Server `modelProvider/list/read/create/update`，并且只在这个设置同步边界从 Credential Broker 解析短程 API Key 后调用 `modelProviderKey/create`。App Server 返回的真实 provider id 会保存为非敏感 `desktopProviderId -> appServerProviderId` 映射。
+4. Desktop Host 生成非敏感 `AgentRuntimeContext`，其中 `modelProfile` 是给 App Server JSON-RPC / RuntimeCore 的唯一模型投影。`credentialRef.providerId` 仍指向宿主 Credential Broker 的 desktop provider id；`provider.appServerProviderId` 表示 App Server provider store 中的真实 id。
+5. `AppServerJsonRpcClient.startAgentRun(...)` 必须按 App Server current schema 发送 `agentSession/start`，再在 `agentSession/turn/start.params.runtimeOptions` 写入 `providerPreference` / `modelPreference`；`providerPreference` 优先使用已同步的 App Server provider id。同一份非敏感上下文只进入 `runtimeOptions.hostOptions.desktopPlatformRuntimeContext`，不写入 App Server 当前不消费的 `agentSession/start.params.runtimeContext` 或 `runtimeOptions.runtimeContext` 假字段。
+6. App Server / RuntimeCore 只消费这些 JSON-RPC 参数和 App Server provider store，不反向读取平台 JSON，也不接受 Product App 私传 provider key。`modelProviderKey/create` 是设置同步控制面，不是 runtime turn payload；`modelProviderKey/next` 会返回明文 key，Desktop Host 不在 Product App invoke 或 runtime handoff 路径调用它。
+
+`ModelProviderConfig` 必须覆盖：
+
+- `id`
+- `displayName`
+- `protocol`
+- `capabilityKinds`
+- `enabled`
+- `apiKeyConfigured`
+- `authType`
+- `baseUrl`
+- `useResponsesApi`
+- `models`
+
+普通 JSON 设置只保存 `apiKeyConfigured` 状态，不保存明文 API Key。真实 key、OAuth token 和 refresh token 只能进入 Credential Broker，不能进入 `ModelSettings`、Product App 设置、Host Snapshot、runtime event 或 JSON-RPC payload。
+
+`AgentRuntimeModelProfile` 只允许包含非敏感字段：
+
+- `settingsVersion`
+- `provider.id`
+- `provider.appServerProviderId`
+- `provider.protocol`
+- `provider.authType`
+- `provider.baseUrl`
+- `provider.useResponsesApi`
+- `provider.capabilityKinds`
+- `provider.credentialConfigured`
+- `provider.credentialRef`
+- `modelId`
+- `requestedModelId`
+- `capability`
+
+`AgentRuntimeContext` 必须同时包含：
+
+- `protocol: 'appserver.runtimeContext'`
+- `version: 1`
+- `source: 'desktop-platform-model-settings'`
+- `permissionMode`
+- `credentialPolicy.handoff: 'credential-ref-only'`
+- `credentialPolicy.plaintextSecrets: false`
+- `credentialPolicy.resolver: 'desktop-host-credential-broker'`
+- `credentialPolicy.runtimeStatus`
+- `credentialPolicy.productionInjectionReady`
+
+`credentialRef` 只表示“凭证已由宿主配置并可由 broker 解析”，例如 kind、provider id、authType、resolver、configured、storage kind、keychain-backed 状态、rotation 状态和 runtime status；resolver 固定为 `desktop-host-credential-broker`。它不是 API Key、OAuth token 或 refresh token。当前最小 Credential Broker 已接入，`settings.saveModel` 输入中的临时 `apiKey` 会写入 broker 并从普通 `ModelSettings` 持久化 JSON 中剔除；保存设置后 Desktop Host 会尝试把 provider/key 同步到 App Server provider store，成功后 diagnostics / runtimeContext 暴露 `runtimeStatus: 'app-server-provider-ready'`、`appServerProviderId` 和非敏感 sync 状态。`broker-reference-only` 表示 broker 已有凭证但尚未完成 App Server provider/key provisioning 或 host resolver 注入，live provider 会 fail-closed。OAuth provider、OS keychain、OAuth token 轮换和生产级注入策略仍未完成。
+
+App Server Runtime readiness 至少检查：
+
+- 是否有 enabled provider。
+- 是否有 text capability。
+- 是否有可用 model。
+- `authType !== 'none'` 时是否已有凭证配置状态。
+- `authType !== 'none'` 时 credential resolver / App Server provider store 是否达到生产级注入状态；`runtimeStatus: 'app-server-provider-ready'` 或 `runtimeStatus: 'resolver-ready'` 才能把 live provider 判为 ready。
+- App Server client 是否已连接。
+
+## 5. Product App 设置边界
+
+平台基础设置全部由 `lime-desktop-platform` 实现：账号、模型 provider、网络、搜索、开放网关、数据、安全、更新、关于等都属于公共设置中心。
+
+业务 App 只能开放自己的独特设置入口，通过 Product Settings extension 接入设置弹窗：
+
+- `appId`
+- `namespace`
+- `scope: 'workspace' | 'user'`
+- `render(context)`
+- `onSaveSettings(value)`
+
+存储分层：
+
+- workspace scope：`.lime-desktop/product-settings/<appId>/<namespace>.json`
+- user scope：`userData/state/product-settings/<appId>/<namespace>.json`
+
+业务 App 独特设置不得保存平台基础设置、OAuth token、模型 API Key、billing 账本或权限权威状态；凭证、token、API Key 和 OAuth 类 namespace / key 会被宿主拒绝。
+
+## 6. 进程边界
 
 ```mermaid
 sequenceDiagram
   autonumber
   participant App as Product App Renderer
   participant Preload as Electron Preload
-  participant Core as Platform Host Core
-  participant Exec as AgentExecutionService
-  participant Backend as Execution Backend
-  participant Sidecar as Pi / MCP Sidecar
+  participant Host as Platform Host Core
+  participant Runtime as AppServerRuntimeService
+  participant Server as Lime App Server JSON-RPC
 
-  App->>Preload: invokeCapability(lime.agentExecution, start)
-  Preload->>Core: IPC capability invoke
-  Core->>Exec: createSession(request)
-  Exec->>Exec: resolve model / auth / readiness / permission policy
-  alt Claude SDK
-    Exec->>Backend: start ClaudeSdkExecutionBackend
-    Backend-->>Exec: normalized events
-  else Pi
-    Exec->>Sidecar: JSONL init / prompt / tool registration
-    Sidecar-->>Exec: JSONL event / tool request / auth error
-  else blocked
-    Exec-->>Core: blocked result
+  App->>Preload: invokeCapability(lime.agent, start)
+  Preload->>Host: IPC capability invoke
+  Host->>Runtime: normalize AgentRuntimeRequest
+  Runtime->>Runtime: resolve provider / model / permission
+  Runtime->>Runtime: build AgentRuntimeContext / AgentRuntimeModelProfile
+  alt App Server client connected
+    Runtime->>Server: agentSession/start
+    Runtime->>Server: turn/start with providerPreference / modelPreference / hostOptions
+    Server-->>Runtime: agentSession/event
+    Runtime-->>Host: normalized AgentRuntimeEvent
+  else client unavailable
+    Runtime-->>Host: blocked / needs-setup with same runtimeContext
   end
-  Exec-->>Core: AgentExecutionEvent stream
-  Core-->>Preload: platform:changed / agent:event
-  Preload-->>App: normalized events
+  Host-->>Preload: capability result / platform:changed
+  Preload-->>App: normalized result
 ```
 
-Electron 主进程可以管理 Node sidecar。renderer 不能直接 spawn、不能读 token、不能 import SDK。
+Renderer 不能 spawn、不能读 token、不能 import Pi SDK / Claude SDK。
 
-### 5.2 Tauri
+App Server client 不可用、未配置 `APP_SERVER_BIN` 或初始化失败时，`AppServerRuntimeService` 仍必须 fail closed；但 `blocked` event/result 也要携带同一个 `runtimeContext` / `modelProfile`。这不是伪执行成功，而是证明“平台设置中心 -> Desktop Host -> App Server JSON-RPC”交接契约已经稳定。注入测试 client 或配置化 stdio sidecar 可走 `started` 路径；开发态 live sidecar smoke 已覆盖 `initialize`、`capability/list`、`agentSession/start` 和 `agentSession/turn/start` 到 RuntimeCore backend 边界。packaged resources manifest 解析、相对路径约束、sha256 校验和 mock backend 阻断已有单元测试；`smoke:app-server-sidecar:packaged` 已覆盖 packaged-resource staging 启动真实 App Server；`smoke:app-server-sidecar:event-stream` 已用真实 App Server 的 external backend fixture 验证 `message.delta` / `turn.completed` 通过 `agentSession/event` 推送到客户端，并通过 `agentSession/read` 读回同一 session 的 turn 和用户消息 read model。`smoke:app-server-sidecar:package-resources` 可指向现有 Electron resources 或 package dir 验证资源形状和真实 stdio 启动，但不等同于已生成 Electron packaged artifact。Electron packaged artifact smoke 和真实 provider / RuntimeBackend live streaming 仍是后续验收项。
 
-```mermaid
-sequenceDiagram
-  autonumber
-  participant App as React Renderer
-  participant Rust as Tauri Rust Commands
-  participant Core as Platform Host Core API
-  participant Sidecar as Node / Native Agent Sidecar
-  participant Backend as Claude SDK / Pi / MCP
+## 7. 治理分类
 
-  App->>Rust: invoke_command(agent_start)
-  Rust->>Core: platform contract payload
-  Core->>Sidecar: JSONL / localhost HTTP with short token
-  Sidecar->>Backend: provider SDK call
-  Backend-->>Sidecar: provider events
-  Sidecar-->>Core: normalized events
-  Core-->>Rust: event stream handle
-  Rust-->>App: frontend event
-```
+- `current`：`lime.agent` capability、`AppServerRuntimeService`、`AgentRuntimeBridgeProfile`、`AgentRuntimeContext`、`AgentRuntimeModelProfile`、App Server JSON-RPC method mapping、provider 设置、Product App 设置 namespace、fail-closed readiness。
+- `compat`：`lime.agentExecution` alias、runtime-backed conformance fixture、`referenceRuntime`。
+- `deprecated`：Product App 或 conformance fixture 仍直接请求 `lime.agentExecution` capability 名称的调用点；退出条件跟随 Product App 全量切换到 `lime.agent`。
+- `dead`：`src/main/services/agentExecution/**` 旧 backend router / descriptor / Claude-Pi not-installed adapter、`src/main/services/agentExecutionService.ts` re-export、Pi agent backend、Claude SDK backend、Product App 直接 import provider SDK、生产路径回退 mock backend、把真实 Product App 塞进平台运行时 catalog。
 
-Tauri 的关键不是把 Pi 或 Claude SDK 改写成 Rust，而是把平台公开契约稳定成 JSON schema，并让 Rust adapter 只承担进程管理、命令桥和安全边界。
+## 8. 落地切片
 
-## 6. Tool / MCP 策略
+### P0: 契约与文档
 
-平台需要一个 backend 无关的工具事实源：
+- `lime.agent` current capability。
+- `lime.agentExecution` compat alias。
+- App Server JSON-RPC bridge profile。
+- host-mediated `AgentRuntimeContext` / `AgentRuntimeModelProfile` handoff。
+- provider 设置和 Product App 设置 namespace 文档。
 
-```mermaid
-flowchart LR
-  Registry[Capability Tool Registry<br/>Zod / JSON Schema / permission metadata]
-  ClaudeTool[Claude SDK tool / createSdkMcpServer]
-  PiProxy[Pi proxy tool defs]
-  MCPServer[session MCP server]
-  Permission[Permission Pipeline]
-  Product[Product capability handlers]
+### P1: Fail-Closed Runtime Service
 
-  Registry --> ClaudeTool
-  Registry --> PiProxy
-  Registry --> MCPServer
-  Registry --> Permission
-  Permission --> Product
-```
+- `AppServerRuntimeService` 返回 `blocked` / `needs-setup` / normalized event。
+- diagnostics 输出 App Server bridge profile。
+- blocked event/result 输出同一份非敏感 `runtimeContext`，证明 provider/model handoff 契约。
+- smoke 验证不会回退 Pi agent、Claude SDK 或 mock backend。
 
-工具分层：
+### P2: Provider 设置保存与凭证托管
 
-- 平台工具：模型设置、OAuth 触发、billing 状态、诊断、更新、应用中心。
-- Product 工具：`zhongcao` 的种草内容生成、GEO 检查、发布 readiness；`content-studio` 的 SOP、素材、审核、媒体生成。
-- Session 工具：计划提交、配置验证、只读上下文读取、受限脚本或 transform。
-- 外部 MCP 工具：GitHub、Linear、Slack、Google 等 source 工具。
+- 设置中心支持 provider 名称、Base URL、API 格式、Responses API、API Key 配置状态和模型优先级。
+- `settings.saveModel` 持久化 `ModelSettings`。
+- 最小 Credential Broker 保存 API Key / OAuth 凭证，普通 `ModelSettings` JSON 只保留 `apiKeyConfigured`。
+- OS keychain、OAuth token 轮换、过期刷新和生产级 credential injection 仍未完成。
 
-默认原则：
+### P3: Product App 设置托管
 
-- 工具 schema 是 current；backend-specific tool wrapper 是 adapter。
-- 所有 mutation 走权限和 readiness。
-- OAuth / credential prompt 只触发平台 UI，不把 token 给 Product App。
-- `safe / ask / allow-all` 这类权限模式可以借鉴，但命名和默认值要按 Lime 产品场景重新定。
+- contracts / shared types 暴露 `ProductAppSettingsRecord`。
+- IPC / preload / host-core 暴露 read/write。
+- Store 按 `appId + namespace + scope` 独立落盘。
+- Store 阻断凭证、token、API Key 和 OAuth 类 namespace / key；真实凭证只能走 Credential Broker。
+- React 设置弹窗支持业务设置扩展分组。
 
-## 7. 会话与事件契约
+### P4: App Server Client
 
-规划中的平台契约应收敛为：
+- 接入 Lime App Server JSON-RPC client。
+- 配置化连接 stdio sidecar lifecycle；开发态可通过 `APP_SERVER_BIN` 指向本地 binary，生产必须走 packaged resources / manifest / sha256。
+- 把 `agentSession/event` 投影到 runtime events。
+- 已有单元测试覆盖 protocol order、runtime hostOptions handoff、event projection、sidecar spawn、`process.resourcesPath/app-server/manifest.json` 解析、binary sha256 校验、资源相对路径约束和 mock backend 阻断；`npm run smoke:app-server-sidecar` 可显式验证开发态 live sidecar，`npm run smoke:app-server-sidecar:packaged` 可验证 packaged-resource staging sidecar，`npm run smoke:app-server-sidecar:event-stream` 可用真实 App Server + external backend fixture 验证 `agentSession/event` 事件推送管道和 `agentSession/read` read model，`APP_SERVER_RESOURCE_DIR=/path/to/resources/app-server npm run smoke:app-server-sidecar:package-resources` 可验证现有 Electron resources / package dir，后续补真实 Electron packaged artifact smoke 和真实 provider / RuntimeBackend live streaming。
 
-```ts
-export interface AgentExecutionRequest {
-  appId: string;
-  entryKey: string;
-  agentAppId?: string;
-  taskId?: string;
-  prompt: string;
-  attachments?: Array<{ kind: 'text' | 'image' | 'file'; ref: string; mimeType?: string }>;
-  modelPolicy?: {
-    preferredModelId?: string;
-    capability: 'text' | 'agent' | 'vision';
-  };
-  toolPolicy?: {
-    allowedToolIds?: string[];
-    permissionMode?: 'safe' | 'ask' | 'allow-all';
-  };
-}
+### P5: Tauri Adapter
 
-export interface AgentExecutionEvent {
-  sessionId: string;
-  sequence: number;
-  type:
-    | 'started'
-    | 'assistant-delta'
-    | 'tool-call'
-    | 'tool-result'
-    | 'permission-request'
-    | 'needs-setup'
-    | 'blocked'
-    | 'completed'
-    | 'failed';
-  payload: unknown;
-  evidence?: Array<{ label: string; ref: string }>;
-}
-```
+- 复用同一 JSON-RPC bridge profile。
+- Tauri 只替换宿主 IPC / sidecar 生命周期，不改公开协议。
 
-这些类型进入 contracts 前必须先和 `agentapp` 标准对齐。Product App 不能自己扩展一套私有 agent event 协议；如果确实需要领域事件，应包在 `payload` 内，由对应 agentapp package 声明。
-
-## 8. Auth / 模型设置边界
-
-`craft-agents-oss` 的可借鉴点是 named LLM connection，而不是它的具体配置文件形态。平台应收敛为：
-
-- `ModelProviderConfig` 表示 provider、protocol、capability、model list。
-- `ModelConnection` 表示 authType、baseUrl、custom endpoint、default model、capability override。
-- `CredentialBroker` 持有 token / key / OAuth refresh，不暴露给 renderer 和 Product App。
-- `runtimeSignature` 判断 session 能否热更新；provider、authType、baseUrl、custom endpoint、model capability 变化时优先重建 backend。
-- OAuth 刷新必须有 mutex，失败时返回 `needs-setup` 或 `blocked`，不能半成功。
-
-## 9. 落地切片
-
-### P0: 文档与契约
-
-- 固化 `AgentExecutionService` 边界。
-- 明确 Claude SDK / Pi 是 adapter，不是公开协议。
-- 在 docs 和 contracts README 标记 current / proposed / compat / dead。
-
-### P1: 最小 AgentExecutionService
-
-- `lime.agentExecution` capability 先返回 `blocked` / `needs-setup` / normalized event。
-- 接入模型设置、OAuth、billing readiness。
-- Product App 只通过 Capability SDK 调用。
-
-当前代码状态：`src/main/services/agentExecution/` 已落最小 backend router、backend descriptor、Claude / Pi / Generic 的 not-installed adapter、sidecar protocol skeleton、Tool Registry skeleton 和 `BlockedBackend`，用于证明平台 contract、capability invoke、readiness、工具注册入口、sidecar 边界和事件归一化路径可用。它不会调用 Claude SDK 或 Pi SDK，也不会伪装成功。
-
-### P2: Claude SDK backend
-
-- 封装 `ClaudeSdkExecutionBackend`。
-- 归一化 Claude SDK message 到平台 `AgentExecutionEvent`。
-- 接入 PreToolUse 权限管线和 session-scoped tool registry。
-- 支持 session resume / abort / mini completion 的最小子集。
-
-### P3: Pi sidecar backend
-
-- 新增 Pi sidecar，不把 Pi SDK 打进 renderer。
-- 定义 JSONL 协议：`init`、`prompt`、`abort`、`register_tools`、`tool_execute_request`、`token_update`、`event`。
-- runtime config signature 漂移时 dispose + recreate。
-- 只通过平台 CredentialBroker 注入短期 credential。
-
-### P4: MCP / Tool Registry
-
-- 以 schema 为工具事实源。
-- 生成 Claude SDK tool、MCP JSON Schema、Pi proxy tool。
-- 把平台工具和 Product 工具分层注册。
-
-### P5: Tauri adapter
-
-- 输出 JSON schema / Rust type 生成策略。
-- Rust adapter 管理 sidecar lifecycle。
-- 同一 conformance fixture 验证 Electron / Tauri。
-
-## 10. 治理分类
-
-- `current`：`agentapp` 标准、平台 Host Snapshot、Capability SDK、`PlatformNavigationIntent`、模型设置、OAuth / billing / OEM 投影、`lime.agentExecution` capability、`AgentExecutionService` backend router、backend descriptor、Claude / Pi / Generic not-installed adapters、sidecar protocol skeleton、Tool Registry skeleton、blocked backend。
-- `proposed-current`：`AgentSessionManager`、Claude SDK backend、Pi sidecar backend、Tauri sidecar adapter 的真实执行实现。
-- `compat`：runtime-backed reference shell、`samples/platform-conformance`、`LIME_RUNTIME_BRIDGE`、`referenceRuntime`。
-- `deprecated`：Product App 私有模型设置、私有 OAuth、私有 billing、私有应用中心协议、把 provider SDK 直接暴露给业务页面。
-- `dead`：把 `content-studio`、`zhongcao` 或 OEM App 当成平台子 App；让平台应用中心生产托管 Product App 子进程；把 Claude SDK / Pi 当成 `agentapp` 标准事实源。
-
-## 11. 必须守住的风险
+## 9. 必须守住的风险
 
 | 风险 | 约束 |
 | --- | --- |
-| SDK 污染公开契约 | contracts 只出现平台语义，不出现 Claude / Pi 类型。 |
-| Product App 重做设置 | 模型、OAuth、billing、OEM 只从 Host Snapshot / Capability SDK 读取。 |
-| 事件协议分叉 | 所有 backend event 先归一化为平台 event，再进入业务 UI。 |
-| Tauri 被 Electron 绑死 | sidecar 协议使用 JSON schema，Rust 只换 adapter。 |
-| tool mutation 失控 | 工具注册必须带 permission metadata 和 readiness guard。 |
-| 伪成功 | 缺模型、缺 token、缺 entitlement、backend 未安装都必须 `blocked` 或 `needs-setup`。 |
+| SDK 污染公开契约 | contracts 只出现平台语义和 App Server JSON-RPC method，不出现 Pi / Claude SDK 类型。 |
+| Product App 重做设置 | 平台基础设置只在平台实现；业务独特设置走 namespace。 |
+| 模型设置断链 | Desktop Host 必须把设置中心解析成 `AgentRuntimeContext.modelProfile` 后再调用 App Server；Product App 不能直传 provider secret。 |
+| 事件协议分叉 | 所有 runtime event 先归一化为 `AgentRuntimeEvent`。 |
+| 生产 mock 成功 | client 不可用或未配置时 fail closed。 |
+| 存储混乱 | userData/state、`.lime-desktop/`、product-settings namespace 分层。 |

@@ -8,6 +8,8 @@ import type {
   ModelSettings,
   PlatformChangeEvent,
   PlatformSettings,
+  ProductAppSettingsReadInput,
+  ProductAppSettingsWriteInput,
   UninstallAppInput,
 } from '../shared/types';
 
@@ -43,6 +45,10 @@ const api: LimeDesktopApi = {
     saveModel: (settings: ModelSettings) => ipcRenderer.invoke(LIME_DESKTOP_IPC.settingsSaveModel, settings),
     getPlatform: () => ipcRenderer.invoke(LIME_DESKTOP_IPC.settingsGetPlatform),
     savePlatform: (settings: PlatformSettings) => ipcRenderer.invoke(LIME_DESKTOP_IPC.settingsSavePlatform, settings),
+    readProductAppSettings: (input: ProductAppSettingsReadInput) =>
+      ipcRenderer.invoke(LIME_DESKTOP_IPC.settingsReadProductApp, input),
+    writeProductAppSettings: (input: ProductAppSettingsWriteInput) =>
+      ipcRenderer.invoke(LIME_DESKTOP_IPC.settingsWriteProductApp, input),
   },
   auth: {
     getSession: () => ipcRenderer.invoke(LIME_DESKTOP_IPC.authGetSession),

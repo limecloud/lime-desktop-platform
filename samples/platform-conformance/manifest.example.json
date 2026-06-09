@@ -32,7 +32,8 @@
       "lime.billing",
       "lime.appUpdates",
       "lime.diagnostics",
-      "lime.agentExecution"
+      "lime.storage",
+      "lime.agent"
     ],
     "hostKinds": ["electron", "tauri"]
   }

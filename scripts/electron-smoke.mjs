@@ -416,17 +416,117 @@ try {
       capability: 'lime.modelSettings',
       operation: 'smoke',
     });
-    const agentExecution = await window.limeDesktop.apps.invokeCapability({
+    const agentRuntime = await window.limeDesktop.apps.invokeCapability({
       appId: '${fixtureAppId}',
       entryKey: '${fixtureEntryKey}',
-      capability: 'lime.agentExecution',
+      capability: 'lime.agent',
       operation: 'start',
       input: {
-        prompt: 'smoke agent execution readiness probe',
+        prompt: 'smoke App Server runtime readiness probe',
         modelPolicy: { capability: 'agent' },
         toolPolicy: { permissionMode: 'safe' },
       },
     });
+    const agentRuntimeContext = agentRuntime.output?.runtimeContext;
+    const agentRuntimeRequestContext = agentRuntime.output?.request?.runtimeContext;
+    const agentRuntimeEventPayload = agentRuntime.output?.events?.[0]?.payload;
+    const agentRuntimeEventContext = agentRuntimeEventPayload?.runtimeContext;
+    const sensitiveRuntimeTerms = ['must-not-persist', 'apiKey', 'token', 'secret'];
+    const runtimeContextText = JSON.stringify(agentRuntimeContext ?? {});
+    const eventPayloadText = JSON.stringify(agentRuntimeEventPayload ?? {});
+    const agentRuntimeContextSensitiveLeak = sensitiveRuntimeTerms.some((term) =>
+      runtimeContextText.includes(term) || eventPayloadText.includes(term)
+    );
+    const productSettingsBefore = await window.limeDesktop.settings.readProductAppSettings({
+      appId: '${fixtureAppId}',
+      namespace: 'smoke',
+      scope: 'workspace',
+    });
+    const productSettingsAfter = await window.limeDesktop.settings.writeProductAppSettings({
+      appId: '${fixtureAppId}',
+      namespace: 'smoke',
+      scope: 'workspace',
+      value: { reviewCadence: 'daily', preferredWorkspaceView: 'board' },
+    });
+    const productSettingsReadBack = await window.limeDesktop.settings.readProductAppSettings({
+      appId: '${fixtureAppId}',
+      namespace: 'smoke',
+      scope: 'workspace',
+    });
+    const storageWrite = await window.limeDesktop.apps.invokeCapability({
+      appId: '${fixtureAppId}',
+      entryKey: '${fixtureEntryKey}',
+      capability: 'lime.storage',
+      operation: 'write',
+      input: {
+        namespace: 'diary',
+        documentId: 'draft-001',
+        scope: 'workspace',
+        value: { title: 'Smoke draft', status: 'draft' },
+      },
+    });
+    const storageRead = await window.limeDesktop.apps.invokeCapability({
+      appId: '${fixtureAppId}',
+      entryKey: '${fixtureEntryKey}',
+      capability: 'lime.storage',
+      operation: 'read',
+      input: { namespace: 'diary', documentId: 'draft-001', scope: 'workspace' },
+    });
+    const storageList = await window.limeDesktop.apps.invokeCapability({
+      appId: '${fixtureAppId}',
+      entryKey: '${fixtureEntryKey}',
+      capability: 'lime.storage',
+      operation: 'list',
+      input: { namespace: 'diary', scope: 'workspace' },
+    });
+    const storageDelete = await window.limeDesktop.apps.invokeCapability({
+      appId: '${fixtureAppId}',
+      entryKey: '${fixtureEntryKey}',
+      capability: 'lime.storage',
+      operation: 'delete',
+      input: { namespace: 'diary', documentId: 'draft-001', scope: 'workspace' },
+    });
+    let storageSecretBlocked = false;
+    try {
+      await window.limeDesktop.apps.invokeCapability({
+        appId: '${fixtureAppId}',
+        entryKey: '${fixtureEntryKey}',
+        capability: 'lime.storage',
+        operation: 'write',
+        input: {
+          namespace: 'oauth-token',
+          documentId: 'secret-001',
+          scope: 'workspace',
+          value: { token: 'must-not-persist' },
+        },
+      });
+    } catch (_error) {
+      storageSecretBlocked = true;
+    }
+    const storageEventRedacted = (await window.limeDesktop.platform.getBootstrap()).runtimeEvents.some((event) =>
+      event.payload?.operation === 'write' &&
+      event.payload?.input?.namespace === 'diary' &&
+      event.payload?.input?.valueRedacted === true &&
+      !JSON.stringify(event.payload).includes('Smoke draft')
+    );
+    const storageReadAfterDelete = await window.limeDesktop.apps.invokeCapability({
+      appId: '${fixtureAppId}',
+      entryKey: '${fixtureEntryKey}',
+      capability: 'lime.storage',
+      operation: 'read',
+      input: { namespace: 'diary', documentId: 'draft-001', scope: 'workspace' },
+    });
+    let invalidProductSettingsBlocked = false;
+    try {
+      await window.limeDesktop.settings.writeProductAppSettings({
+        appId: '${fixtureAppId}/../bad',
+        namespace: 'smoke',
+        scope: 'workspace',
+        value: { unsafe: true },
+      });
+    } catch (_error) {
+      invalidProductSettingsBlocked = true;
+    }
     return {
       catalogCount: bootstrap.catalog.length,
       controlPlaneSource: bootstrap.diagnostics.controlPlane.source,
@@ -441,18 +541,42 @@ try {
       launched: launch.launched,
       snapshotAppId: launch.snapshot?.appId,
       capabilityOk: capability.ok,
-      agentExecutionOk: agentExecution.ok,
-      agentExecutionState: agentExecution.output?.state,
-      agentExecutionBackend: agentExecution.output?.backend,
-      agentExecutionEventType: agentExecution.output?.events?.[0]?.type,
-      agentToolCount: agentExecution.output?.events?.[0]?.payload?.toolCount,
-      diagnosticsHasClaudeDescriptor: diagnostics.output?.agentExecution?.backends?.some((backend) =>
-        backend.kind === 'claude-sdk' && backend.status === 'not-installed'
-      ),
-      diagnosticsHasPiDescriptor: diagnostics.output?.agentExecution?.backends?.some((backend) =>
-        backend.kind === 'pi-sidecar' && backend.status === 'not-installed'
-      ),
-      diagnosticsToolCount: diagnostics.output?.agentExecution?.tools?.length,
+      agentRuntimeOk: agentRuntime.ok,
+      agentRuntimeState: agentRuntime.output?.state,
+      agentRuntimeBridge: agentRuntime.output?.bridge,
+      agentRuntimeEventType: agentRuntime.output?.events?.[0]?.type,
+      agentRuntimeEventMethod: agentRuntime.output?.events?.[0]?.method,
+      agentRuntimeMethodStartSession: agentRuntime.output?.bridgeProfile?.methods?.startSession,
+      agentRuntimeMethodStartTurn: agentRuntime.output?.bridgeProfile?.methods?.startTurn,
+      agentRuntimeContextProtocol: agentRuntimeContext?.protocol,
+      agentRuntimeContextSource: agentRuntimeContext?.source,
+      agentRuntimeContextProviderId: agentRuntimeContext?.modelProfile?.provider?.id,
+      agentRuntimeContextModelId: agentRuntimeContext?.modelProfile?.modelId,
+      agentRuntimeContextProviderAuthType: agentRuntimeContext?.modelProfile?.provider?.authType,
+      agentRuntimeContextPlaintextSecrets: agentRuntimeContext?.credentialPolicy?.plaintextSecrets,
+      agentRuntimeCredentialRuntimeStatus: agentRuntimeContext?.credentialPolicy?.runtimeStatus,
+      agentRuntimeCredentialProductionReady: agentRuntimeContext?.credentialPolicy?.productionInjectionReady,
+      agentRuntimeRequestContextProtocol: agentRuntimeRequestContext?.protocol,
+      agentRuntimeEventContextProtocol: agentRuntimeEventContext?.protocol,
+      agentRuntimeContextSensitiveLeak,
+      diagnosticsRuntimeCapability: diagnostics.output?.appServerRuntime?.currentCapability,
+      diagnosticsRuntimeBridge: diagnostics.output?.appServerRuntime?.bridgeProfile?.kind,
+      diagnosticsRuntimeOwner: diagnostics.output?.appServerRuntime?.bridgeProfile?.runtimeOwner,
+      diagnosticsRuntimeConnected: diagnostics.output?.appServerRuntime?.client?.connected,
+      productSettingsInitialVersion: productSettingsBefore.version,
+      productSettingsVersion: productSettingsAfter.version,
+      productSettingsScope: productSettingsAfter.scope,
+      productSettingsReadBackView: productSettingsReadBack.value?.preferredWorkspaceView,
+      storageWriteOk: storageWrite.ok,
+      storageWriteVersion: storageWrite.output?.version,
+      storageReadTitle: storageRead.output?.value?.title,
+      storageListCount: storageList.output?.documents?.length,
+      storageDeleteOk: storageDelete.ok,
+      storageDeleted: storageDelete.output?.deleted,
+      storageReadAfterDeleteVersion: storageReadAfterDelete.output?.version,
+      storageSecretBlocked,
+      storageEventRedacted,
+      invalidProductSettingsBlocked,
       bodyHasRuntime: document.body.innerText.includes('运行'),
     };
   })()`, true);
@@ -471,14 +595,42 @@ try {
     !bridgeState.launched ||
     bridgeState.snapshotAppId !== fixtureAppId ||
     !bridgeState.capabilityOk ||
-    bridgeState.agentExecutionOk ||
-    bridgeState.agentExecutionState !== 'blocked' ||
-    bridgeState.agentExecutionBackend !== 'blocked' ||
-    bridgeState.agentExecutionEventType !== 'blocked' ||
-    bridgeState.agentToolCount !== 2 ||
-    !bridgeState.diagnosticsHasClaudeDescriptor ||
-    !bridgeState.diagnosticsHasPiDescriptor ||
-    bridgeState.diagnosticsToolCount !== 2
+    bridgeState.agentRuntimeOk ||
+    bridgeState.agentRuntimeState !== 'blocked' ||
+    bridgeState.agentRuntimeBridge !== 'app-server-json-rpc' ||
+    bridgeState.agentRuntimeEventType !== 'blocked' ||
+    bridgeState.agentRuntimeEventMethod !== 'agentSession/turn/start' ||
+    bridgeState.agentRuntimeMethodStartSession !== 'agentSession/start' ||
+    bridgeState.agentRuntimeMethodStartTurn !== 'agentSession/turn/start' ||
+    bridgeState.agentRuntimeContextProtocol !== 'appserver.runtimeContext' ||
+    bridgeState.agentRuntimeContextSource !== 'desktop-platform-model-settings' ||
+    bridgeState.agentRuntimeContextProviderId !== 'local' ||
+    bridgeState.agentRuntimeContextModelId !== 'local-default' ||
+    bridgeState.agentRuntimeContextProviderAuthType !== 'none' ||
+    bridgeState.agentRuntimeContextPlaintextSecrets !== false ||
+    bridgeState.agentRuntimeCredentialRuntimeStatus !== 'not-required' ||
+    bridgeState.agentRuntimeCredentialProductionReady !== true ||
+    bridgeState.agentRuntimeRequestContextProtocol !== 'appserver.runtimeContext' ||
+    bridgeState.agentRuntimeEventContextProtocol !== 'appserver.runtimeContext' ||
+    bridgeState.agentRuntimeContextSensitiveLeak ||
+    bridgeState.diagnosticsRuntimeCapability !== 'lime.agent' ||
+    bridgeState.diagnosticsRuntimeBridge !== 'app-server-json-rpc' ||
+    bridgeState.diagnosticsRuntimeOwner !== 'runtime-core' ||
+    bridgeState.diagnosticsRuntimeConnected !== false ||
+    bridgeState.productSettingsInitialVersion !== '0' ||
+    bridgeState.productSettingsVersion !== '1' ||
+    bridgeState.productSettingsScope !== 'workspace' ||
+    bridgeState.productSettingsReadBackView !== 'board' ||
+    !bridgeState.storageWriteOk ||
+    bridgeState.storageWriteVersion !== '1' ||
+    bridgeState.storageReadTitle !== 'Smoke draft' ||
+    bridgeState.storageListCount !== 1 ||
+    !bridgeState.storageDeleteOk ||
+    !bridgeState.storageDeleted ||
+    bridgeState.storageReadAfterDeleteVersion !== '0' ||
+    !bridgeState.storageSecretBlocked ||
+    !bridgeState.storageEventRedacted ||
+    !bridgeState.invalidProductSettingsBlocked
   ) {
     throw new Error(`Smoke 状态不符合预期：${JSON.stringify(bridgeState)}`);
   }

@@ -1,6 +1,6 @@
 {
   "name": "lime-desktop-platform",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Lime 桌面平台底座，用于承接 Agent App 宿主、应用中心、模型设置、OAuth、OEM 和充值。",
   "type": "module",
   "main": "out/main/index.js",
@@ -8,6 +8,7 @@
   "author": "Lime Cloud",
   "workspaces": [
     "packages/contracts",
+    "packages/host-core",
     "packages/react"
   ],
   "engines": {
@@ -19,16 +20,24 @@
     "start": "electron-vite preview",
     "smoke:electron": "node scripts/electron-smoke.mjs",
     "smoke:electron:headed": "node scripts/electron-smoke.mjs --headed",
+    "smoke:app-server-sidecar": "node scripts/testing/app-server-sidecar-smoke.mjs",
+    "smoke:app-server-sidecar:packaged": "node scripts/testing/app-server-sidecar-smoke.mjs --packaged-resource",
+    "smoke:app-server-sidecar:package-resources": "node scripts/testing/app-server-sidecar-smoke.mjs --package-resources",
+    "smoke:app-server-sidecar:event-stream": "node scripts/testing/app-server-event-stream-smoke.mjs",
     "governance:hardcode-scan": "node scripts/governance-hardcode-scan.mjs",
+    "test": "npm run test:unit",
+    "test:unit": "node scripts/testing/run-unit-tests.mjs",
     "typecheck": "tsc --noEmit",
     "pack:contracts": "mkdir -p dist && npm pack --workspace @limecloud/desktop-platform-contracts --pack-destination dist",
+    "pack:host-core": "mkdir -p dist && npm pack --workspace @limecloud/desktop-platform-host-core --pack-destination dist",
     "pack:react": "mkdir -p dist && npm pack --workspace @limecloud/desktop-platform-react --pack-destination dist",
-    "build:packages": "npm run build --workspace @limecloud/desktop-platform-contracts && npm run build --workspace @limecloud/desktop-platform-react",
-    "verify:local": "npm run typecheck && npm run build && npm run smoke:electron"
+    "build:packages": "npm run build --workspace @limecloud/desktop-platform-contracts && npm run build --workspace @limecloud/desktop-platform-host-core && npm run build --workspace @limecloud/desktop-platform-react",
+    "verify:local": "npm run test:unit && npm run typecheck && npm run build && npm run smoke:electron"
   },
   "dependencies": {
-    "@limecloud/desktop-platform-contracts": "0.1.4",
-    "@limecloud/desktop-platform-react": "0.1.4",
+    "@limecloud/desktop-platform-contracts": "0.1.5",
+    "@limecloud/desktop-platform-host-core": "0.1.5",
+    "@limecloud/desktop-platform-react": "0.1.5",
     "react": "^19.2.3",
     "react-dom": "^19.2.3"
   },

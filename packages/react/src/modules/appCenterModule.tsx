@@ -572,7 +572,9 @@ function capabilityLabel(capability: PlatformCapability): string {
     'lime.download': '下载',
     'lime.permissions': '权限',
     'lime.diagnostics': '诊断',
-    'lime.agentExecution': 'Agent 执行',
+    'lime.storage': '业务存储',
+    'lime.agent': 'Agent 运行时',
+    'lime.agentExecution': 'Agent 运行时（兼容）',
   };
 
   return labels[capability] ?? capability;

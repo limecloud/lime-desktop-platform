@@ -9,12 +9,15 @@ import type {
   DesktopAppProjection,
   HostSnapshot,
   LaunchEntryResult,
+  ModelProviderConfig,
   ModelSettings,
   PlatformBootstrap,
   PlatformCapability,
   PlatformNavigationIntent,
   PlatformNavigationTarget,
   PlatformSettings,
+  ProductAppSettingsRecord,
+  ProductAppSettingsScope,
   ReadinessResult,
   RuntimeEvent,
   UpdateActionResult,
@@ -48,7 +51,8 @@ export type PlatformSettingsPageKey =
   | 'network'
   | 'data'
   | 'account'
-  | 'about';
+  | 'about'
+  | `product:${string}`;
 
 export interface PlatformIntentResultView {
   ok: boolean;
@@ -69,18 +73,40 @@ export interface PlatformModelProviderProjection {
   id: string;
   displayName: string;
   description?: string;
-  protocol?: string;
+  protocol?: ModelProviderConfig['protocol'] | string;
+  capabilityKinds?: ModelProviderConfig['capabilityKinds'];
   enabled?: boolean;
   apiKeyConfigured?: boolean;
+  authType?: ModelProviderConfig['authType'];
   baseUrl?: string;
+  useResponsesApi?: boolean;
   models: string[];
 }
 
 export interface PlatformModelSettingsProjection {
   version?: string;
   updatedAt?: string;
+  defaultAgentProviderId?: string;
   defaultTextModelId?: string;
   providers: PlatformModelProviderProjection[];
+}
+
+export interface ProductSettingsExtension {
+  key: string;
+  label: string;
+  description?: string;
+  appId?: string;
+  namespace?: string;
+  scope?: ProductAppSettingsScope;
+  settings?: ProductAppSettingsRecord | null;
+  onSaveSettings?: (value: Record<string, unknown>) => Promise<ProductAppSettingsRecord> | ProductAppSettingsRecord;
+  render: (context: {
+    account?: PlatformAccountProjection | null;
+    modelSettings?: PlatformModelSettingsProjection | null;
+    settings?: ProductAppSettingsRecord | null;
+    onSaveSettings?: (value: Record<string, unknown>) => Promise<ProductAppSettingsRecord> | ProductAppSettingsRecord;
+    onOpenPlatformIntent: (intent: PlatformNavigationIntent) => Promise<unknown> | unknown;
+  }) => ReactNode;
 }
 
 export type { PlatformAboutSettingsProjection } from './settings/aboutSettings';
@@ -96,6 +122,7 @@ export interface PlatformModuleActionHandlers {
   login: (tenantName: string, accountEmail: string) => Promise<unknown>;
   logout: () => Promise<unknown>;
   enableLocalModel: () => Promise<ModelSettings>;
+  saveModelSettings: (settings: ModelSettings) => Promise<ModelSettings>;
   refreshBilling: () => Promise<BillingSnapshot>;
   savePlatformSettings: (settings: PlatformSettings) => Promise<PlatformSettings>;
   checkUpdates: () => Promise<UpdateState>;
@@ -178,7 +205,7 @@ export function getAccountProjectionFromBootstrap(bootstrap?: PlatformBootstrap 
 export function getModelSettingsProjectionFromHostSnapshot(snapshot?: HostSnapshot | null): PlatformModelSettingsProjection {
   return {
     version: snapshot?.modelSettingsVersion,
-    defaultTextModelId: snapshot?.modelSettingsVersion ? 'claude-default' : undefined,
+    defaultTextModelId: undefined,
     providers: createDefaultModelProviderProjection(snapshot?.modelSettingsVersion),
   };
 }
@@ -191,14 +218,18 @@ export function getModelSettingsProjectionFromBootstrap(bootstrap?: PlatformBoot
   return {
     version: bootstrap.modelSettings.version,
     updatedAt: bootstrap.modelSettings.updatedAt,
+    defaultAgentProviderId: bootstrap.modelSettings.defaultAgentProviderId,
     defaultTextModelId: bootstrap.modelSettings.defaultTextModelId,
     providers: bootstrap.modelSettings.providers.map((provider) => ({
       id: provider.id,
       displayName: provider.displayName,
       protocol: provider.protocol,
+      capabilityKinds: provider.capabilityKinds,
       enabled: provider.enabled,
       apiKeyConfigured: provider.apiKeyConfigured,
+      authType: provider.authType,
       baseUrl: provider.baseUrl,
+      useResponsesApi: provider.useResponsesApi,
       models: provider.models,
     })),
   };
@@ -236,6 +267,8 @@ export function PlatformSettingsDialog(props: {
   activePage: PlatformSettingsPageKey;
   latestIntentResult?: PlatformIntentResultView;
   modelSettings?: PlatformModelSettingsProjection | null;
+  productSettings?: ProductSettingsExtension[];
+  onSaveModelSettings?: (settings: ModelSettings) => Promise<ModelSettings> | ModelSettings;
   onSelectPage: (page: PlatformSettingsPageKey) => void;
   onClose: () => void;
   onOpenPlatformIntent: (intent: PlatformNavigationIntent) => Promise<unknown> | unknown;
@@ -246,7 +279,15 @@ export function PlatformSettingsDialog(props: {
   const accountState = getAccountStateLabel(account);
   const accountReady = account.oauthState === 'authenticated';
   const sessionActionLabel = accountReady ? '打开账号 / 退出登录' : '打开登录';
-  const activeNavItem = settingsNavItems.find((item) => item.key === props.activePage) ?? settingsNavItems[0];
+  const productSettings = props.productSettings ?? [];
+  const activeProductPage =
+    props.activePage.startsWith('product:')
+      ? productSettings.find((item) => props.activePage === `product:${item.key}`)
+      : undefined;
+  const activeNavItem =
+    activeProductPage
+      ? { key: props.activePage, label: activeProductPage.label, description: activeProductPage.description }
+      : settingsNavItems.find((item) => item.key === props.activePage) ?? settingsNavItems[0];
 
   return (
     <div className="lime-settings-overlay" role="presentation">
@@ -265,6 +306,20 @@ export function PlatformSettingsDialog(props: {
                 <span className="lime-settings-nav-label">{item.label}</span>
               </button>
             ))}
+            {productSettings.length > 0 ? <div className="lime-settings-nav-section">业务设置</div> : null}
+            {productSettings.map((item) => {
+              const pageKey = `product:${item.key}` as PlatformSettingsPageKey;
+              return (
+                <button
+                  className={props.activePage === pageKey ? 'lime-settings-nav-item active' : 'lime-settings-nav-item'}
+                  key={item.key}
+                  type="button"
+                  onClick={() => props.onSelectPage(pageKey)}
+                >
+                  <span className="lime-settings-nav-label">{item.label}</span>
+                </button>
+              );
+            })}
           </nav>
         </aside>
 
@@ -295,6 +350,7 @@ export function PlatformSettingsDialog(props: {
           ) : props.activePage === 'model' ? (
             <PlatformModelSettingsPage
               modelSettings={props.modelSettings ?? { providers: createDefaultModelProviderProjection() }}
+              onSaveModelSettings={props.onSaveModelSettings}
               onOpenPlatformIntent={props.onOpenPlatformIntent}
             />
           ) : props.activePage === 'voice-model' ? (
@@ -319,11 +375,18 @@ export function PlatformSettingsDialog(props: {
               about={props.about}
               onOpenPlatformIntent={props.onOpenPlatformIntent}
             />
+          ) : activeProductPage ? (
+            <ProductSettingsExtensionPage
+              account={account}
+              extension={activeProductPage}
+              modelSettings={props.modelSettings}
+              onOpenPlatformIntent={props.onOpenPlatformIntent}
+            />
           ) : (
             <PlatformSettingsProjectionPage item={activeNavItem} />
           )}
 
-          {props.activePage === 'model' ? null : (
+          {props.activePage === 'model' || activeProductPage ? null : (
             <div className="lime-settings-footer">
               <button className="lime-settings-reset" type="button" disabled>
                 恢复默认
@@ -639,7 +702,7 @@ function RuntimeModule(props: PlatformModuleProps): ReactElement {
 
   return (
     <div className="runtime-layout">
-      <ModuleHead title="运行" description="查看 Host Snapshot、bridge 消息、agent execution backend 和 capability 调用结果。" />
+      <ModuleHead title="运行" description="查看 Host Snapshot、App Server JSON-RPC bridge、RuntimeCore event 和 capability 调用结果。" />
       {props.runtimeResult?.snapshot ? (
         <div className="runtime-grid">
           <Panel title="Host Snapshot">
@@ -790,7 +853,7 @@ function PlatformGeneralSettingsPage(): ReactElement {
       <div className="lime-settings-divider wide" />
       <PlatformToggleRow title="通知" description="在生成任务完成或失败时接收平台通知。" checked />
       <PlatformToggleRow title="减少动画" description="关闭界面过渡动画，降低 GPU 功耗。" />
-      <PlatformToggleRow title="同步 Claude Code 历史" description="将本地 Claude Code 终端对话同步到当前工作区。" />
+      <PlatformToggleRow title="同步本地 Agent 历史" description="将本地 Agent 会话投影同步到当前工作区。" />
       <PlatformShortcutRow title="快捷键唤起小窗" description="在桌面任意位置唤醒 AI。" shortcut="⌥ Space" checked />
       <PlatformToggleRow title="命令白名单" description="允许自动运行的命令。" />
       <div className="lime-general-section">
@@ -916,6 +979,30 @@ function PlatformSettingsProjectionPage(props: { item: SettingsNavItem }): React
       <div className="lime-settings-projection-note">
         当前页面已由平台公共设置中心承载。Product App 只挂载本组件，后续真实保存由 `lime-desktop-platform` 的 host-core action handler 接入。
       </div>
+    </div>
+  );
+}
+
+function ProductSettingsExtensionPage(props: {
+  account?: PlatformAccountProjection | null;
+  extension: ProductSettingsExtension;
+  modelSettings?: PlatformModelSettingsProjection | null;
+  onOpenPlatformIntent: (intent: PlatformNavigationIntent) => Promise<unknown> | unknown;
+}): ReactElement {
+  return (
+    <div className="lime-product-settings-extension">
+      <div className="lime-settings-divider wide" />
+      <div className="lime-settings-extension-boundary">
+        <strong>{props.extension.appId ?? props.extension.key}</strong>
+        <span>{props.extension.namespace ?? 'default'} / {props.extension.scope ?? 'workspace'}</span>
+      </div>
+      {props.extension.render({
+        account: props.account,
+        modelSettings: props.modelSettings,
+        settings: props.extension.settings,
+        onSaveSettings: props.extension.onSaveSettings,
+        onOpenPlatformIntent: props.onOpenPlatformIntent,
+      })}
     </div>
   );
 }
@@ -1241,7 +1328,7 @@ function PlatformSearchServiceSettingsPage(): ReactElement {
     <div className="lime-search-settings">
       <div className="lime-search-info">
         <span aria-hidden="true">ⓘ</span>
-        <p>当使用非 Claude 模型时，AI 将使用以下搜索服务代替内置 WebSearch。启用多个服务时，按优先级顺序调用，失败自动切换下一个。拖拽调整优先级。</p>
+        <p>当模型运行时需要外部搜索时，AI 将使用以下搜索服务。启用多个服务时，按优先级顺序调用，失败自动切换下一个。拖拽调整优先级。</p>
       </div>
 
       <section className="lime-search-service-section">
@@ -1379,6 +1466,7 @@ function SearchAvailableProviderRow(props: {
 
 function PlatformModelSettingsPage(props: {
   modelSettings: PlatformModelSettingsProjection;
+  onSaveModelSettings?: (settings: ModelSettings) => Promise<ModelSettings> | ModelSettings;
   onOpenPlatformIntent: (intent: PlatformNavigationIntent) => Promise<unknown> | unknown;
 }): ReactElement {
   const providers = props.modelSettings.providers.length > 0
@@ -1388,7 +1476,7 @@ function PlatformModelSettingsPage(props: {
     () => normalizeModelProviders(providers, props.modelSettings.version),
     [providers, props.modelSettings.version],
   );
-  const defaultProviderId = props.modelSettings.defaultTextModelId?.includes('deepseek') ? 'deepseek' : 'claude';
+  const defaultProviderId = props.modelSettings.defaultAgentProviderId ?? props.modelSettings.providers[0]?.id;
   const initialProvider = baseProviders.find((provider) => provider.id === defaultProviderId) ?? baseProviders[0];
   const [selectedProviderId, setSelectedProviderId] = useState<string>(initialProvider.id);
   const [mode, setMode] = useState<'details' | 'catalog'>('details');
@@ -1398,6 +1486,7 @@ function PlatformModelSettingsPage(props: {
   );
   const [testState, setTestState] = useState<'idle' | 'ok'>('idle');
   const [guideProviderId, setGuideProviderId] = useState<string>();
+  const [saveStatus, setSaveStatus] = useState('provider 设置由平台统一保存，业务 App 只能读取投影或请求打开本页。');
   const normalizedProviders = useMemo(
     () => mergeModelProviders(baseProviders, catalogProviders),
     [baseProviders, catalogProviders],
@@ -1436,11 +1525,7 @@ function PlatformModelSettingsPage(props: {
     );
     setProviderDrafts((current) => ({
       ...current,
-      [option.id]: current[option.id] ?? {
-        apiKey: '',
-        modelInput: option.models[0] ?? '',
-        models: option.models,
-      },
+      [option.id]: current[option.id] ?? createProviderDraft(provider),
     }));
     setSelectedProviderId(option.id);
     setMode('details');
@@ -1489,6 +1574,20 @@ function PlatformModelSettingsPage(props: {
   };
 
   const selectedDraft = providerDrafts[selectedProvider.id] ?? createProviderDraft(selectedProvider);
+  const saveSelectedProvider = async (): Promise<void> => {
+    const nextSettings = buildModelSettingsFromDrafts({
+      current: props.modelSettings,
+      providers: normalizedProviders,
+      drafts: providerDrafts,
+      selectedProviderId: selectedProvider.id,
+    });
+    if (!props.onSaveModelSettings) {
+      setSaveStatus('当前宿主未接入 settings.saveModel，已停留在 UI 草稿。');
+      return;
+    }
+    await props.onSaveModelSettings(nextSettings);
+    setSaveStatus(`${selectedDraft.displayName || selectedProvider.displayName} 已保存为默认 Agent provider。`);
+  };
 
   return (
     <div className="lime-model-settings">
@@ -1531,10 +1630,12 @@ function PlatformModelSettingsPage(props: {
             onOpenProviderGuide={() => setGuideProviderId(selectedProvider.id)}
             onMovePriorityModel={(model, direction) => movePriorityModel(selectedProvider.id, model, direction)}
             onRemovePriorityModel={(model) => removePriorityModel(selectedProvider.id, model)}
+            onSaveProvider={() => void saveSelectedProvider()}
             onTestConnection={() => setTestState('ok')}
             onUpdateDraft={(patch) => updateProviderDraft(selectedProvider.id, patch)}
           />
         )}
+        <div className="lime-model-status">{saveStatus}</div>
         <button
           className="lime-model-intent-link"
           type="button"
@@ -1576,39 +1677,92 @@ function ProviderConfigCard(props: {
   onOpenProviderGuide: () => void;
   onMovePriorityModel: (model: string, direction: -1 | 1) => void;
   onRemovePriorityModel: (model: string) => void;
+  onSaveProvider: () => void;
   onTestConnection: () => void;
   onUpdateDraft: (patch: Partial<ProviderDraftState>) => void;
 }): ReactElement {
-  const isClaude = props.provider.id === 'claude';
-  const ready = isClaude || props.provider.apiKeyConfigured || props.draft.apiKey.trim().length > 0 || props.testState === 'ok';
-  const displayName = isClaude ? '默认 (Claude)' : props.provider.displayName;
+  const ready = props.draft.authType === 'none' || props.draft.apiKeyConfigured || props.draft.apiKey.trim().length > 0 || props.testState === 'ok';
   return (
     <section className="lime-model-config-card">
       <div className="lime-model-card-title">
         <div className="lime-model-card-title-main">
           <ProviderIcon providerId={props.provider.id} />
-          <h2>{displayName}</h2>
+          <h2>{props.draft.displayName || props.provider.displayName}</h2>
         </div>
-        {!isClaude ? <button type="button" onClick={props.onOpenProviderGuide}>去获取 API 密钥 ↗</button> : null}
+        <button type="button" onClick={props.onOpenProviderGuide}>获取凭证 ↗</button>
       </div>
       {props.guideRequested ? (
         <div className="lime-model-guide-notice">
-          已请求打开 {props.provider.displayName} API Key 获取入口；真实外部链接由平台 provider metadata / host-core 接入。
+          已请求打开 {props.provider.displayName} 凭证获取入口；真实外部链接由平台 provider metadata / Credential Broker 接入。
         </div>
       ) : null}
-      {isClaude ? (
-        <div className="lime-model-ready-banner">✓ 已就绪 - 使用 Claude 原生 OAuth 认证，无需配置 API Key</div>
-      ) : (
+      <div className={ready ? 'lime-model-ready-banner' : 'lime-model-ready-banner pending'}>
+        {ready ? '已具备调用条件' : '需要补齐凭证或启用无凭证本地运行时'}
+      </div>
+      <div className="lime-model-field-grid">
         <label className="lime-model-field">
-          <span>API 密钥</span>
+          <span>Provider 名称</span>
           <input
-            value={props.draft.apiKey}
-            onChange={(event) => props.onUpdateDraft({ apiKey: event.target.value })}
-            placeholder="输入 API 密钥"
-            type="password"
+            value={props.draft.displayName}
+            onChange={(event) => props.onUpdateDraft({ displayName: event.target.value })}
+            placeholder="供应商名称"
           />
         </label>
-      )}
+        <label className="lime-model-field">
+          <span>Base URL</span>
+          <input
+            value={props.draft.baseUrl}
+            onChange={(event) => props.onUpdateDraft({ baseUrl: event.target.value })}
+            placeholder="https://api.example.com/v1"
+          />
+        </label>
+      </div>
+      <div className="lime-model-field-grid">
+        <label className="lime-model-field">
+          <span>API 格式</span>
+          <select
+            value={props.draft.protocol}
+            onChange={(event) => props.onUpdateDraft({ protocol: event.target.value as ModelProviderConfig['protocol'] })}
+          >
+            <option value="openai-compatible">OpenAI Compatible</option>
+            <option value="anthropic-compatible">Anthropic Compatible</option>
+            <option value="gemini-native">Gemini Native</option>
+            <option value="local">Local</option>
+          </select>
+        </label>
+        <label className="lime-model-field">
+          <span>认证方式</span>
+          <select
+            value={props.draft.authType}
+            onChange={(event) => props.onUpdateDraft({ authType: event.target.value as ModelProviderConfig['authType'] })}
+          >
+            <option value="api-key">API Key</option>
+            <option value="oauth">OAuth</option>
+            <option value="none">None</option>
+          </select>
+        </label>
+      </div>
+      <PlatformEditableToggleRow
+        checked={props.draft.useResponsesApi}
+        description="OpenAI 兼容 provider 可优先使用 Responses API；其他格式由 App Server RuntimeCore 选择合适方法。"
+        title="使用 Responses API"
+        onToggle={() => props.onUpdateDraft({ useResponsesApi: !props.draft.useResponsesApi })}
+      />
+      <PlatformEditableToggleRow
+        checked={props.draft.enabled}
+        description="停用后不会出现在 Agent Runtime 可选 provider 中。"
+        title="启用 Provider"
+        onToggle={() => props.onUpdateDraft({ enabled: !props.draft.enabled })}
+      />
+      <label className="lime-model-field">
+        <span>API 密钥</span>
+        <input
+          value={props.draft.apiKey}
+          onChange={(event) => props.onUpdateDraft({ apiKey: event.target.value, apiKeyConfigured: event.target.value.trim().length > 0 })}
+          placeholder={props.draft.apiKeyConfigured ? '已配置，输入新密钥后更新状态' : '输入 API 密钥'}
+          type="password"
+        />
+      </label>
       <div className="lime-model-priority">
         <span>模型优先级（至少添加一个）</span>
         <div className="lime-model-priority-box">
@@ -1640,13 +1794,16 @@ function ProviderConfigCard(props: {
           </div>
         </div>
       </div>
-      {!isClaude ? (
+      <div className="lime-model-card-actions">
         <button className="lime-model-test-button" type="button" onClick={props.onTestConnection}>
           ↯ {props.testState === 'ok' ? '连接正常' : `测试连接${ready ? '' : '并激活'}`}
         </button>
-      ) : null}
+        <button className="lime-model-save-button" type="button" onClick={props.onSaveProvider}>
+          保存并设为默认
+        </button>
+      </div>
       <small className="lime-model-footnote">
-        {props.modelSettings.version ? `配置版本 ${props.modelSettings.version}` : '模型设置由平台维护，当前业务 App 只读取投影。'}
+        {props.modelSettings.version ? `配置版本 ${props.modelSettings.version}` : '模型设置由平台维护；API Key 明文不会写入普通设置 JSON。'}
       </small>
     </section>
   );
@@ -1679,6 +1836,30 @@ function ProviderCatalog(props: { onSelectProvider: (provider: ProviderCatalogOp
         ))}
       </div>
     </section>
+  );
+}
+
+function PlatformEditableToggleRow(props: {
+  checked: boolean;
+  description: string;
+  title: string;
+  onToggle: () => void;
+}): ReactElement {
+  return (
+    <div className="lime-model-toggle-row">
+      <div>
+        <strong>{props.title}</strong>
+        <span>{props.description}</span>
+      </div>
+      <button
+        className={props.checked ? 'lime-toggle checked' : 'lime-toggle'}
+        type="button"
+        aria-pressed={props.checked}
+        onClick={props.onToggle}
+      >
+        <span />
+      </button>
+    </div>
   );
 }
 
@@ -1910,7 +2091,9 @@ function capabilityLabel(capability: PlatformCapability): string {
     'lime.download': '下载',
     'lime.permissions': '权限',
     'lime.diagnostics': '诊断',
-    'lime.agentExecution': 'Agent 执行',
+    'lime.storage': '业务存储',
+    'lime.agent': 'Agent 运行时',
+    'lime.agentExecution': 'Agent 运行时（兼容）',
   };
 
   return labels[capability] ?? capability;
@@ -1980,10 +2163,24 @@ type ProviderIconKey =
   | 'lmstudio'
   | 'custom';
 
-interface ProviderDraftState {
+export interface ProviderDraftState {
   apiKey: string;
+  apiKeyConfigured: boolean;
+  authType: ModelProviderConfig['authType'];
+  baseUrl: string;
+  displayName: string;
+  enabled: boolean;
   modelInput: string;
   models: string[];
+  protocol: ModelProviderConfig['protocol'];
+  useResponsesApi: boolean;
+}
+
+export interface BuildModelSettingsFromDraftsInput {
+  current: PlatformModelSettingsProjection;
+  providers: PlatformModelProviderProjection[];
+  drafts: Record<string, ProviderDraftState>;
+  selectedProviderId: string;
 }
 
 interface VoiceHistoryRecord {
@@ -2341,22 +2538,38 @@ function getAccountAvatarLetter(account?: PlatformAccountProjection | null): str
 function createDefaultModelProviderProjection(version?: string): PlatformModelProviderProjection[] {
   return [
     {
-      id: 'claude',
-      displayName: '默认 (Claude)',
-      description: 'Use the default model',
-      protocol: 'anthropic-compatible',
+      id: 'openai-compatible',
+      displayName: 'OpenAI Compatible',
+      description: 'OpenAI 兼容模型供应商',
+      protocol: 'openai-compatible',
+      capabilityKinds: ['text', 'image'],
       enabled: Boolean(version),
-      apiKeyConfigured: Boolean(version),
-      models: ['Use the default model (currently Sonnet 4.6)', 'Haiku 4.5', 'Sonnet 4.6 for long sessions', 'Opus 4.7 (1M)'],
+      apiKeyConfigured: false,
+      authType: 'api-key',
+      useResponsesApi: true,
+      models: ['gpt-4.1-mini', 'gpt-4.1', 'o4-mini'],
     },
     {
-      id: 'deepseek',
-      displayName: 'DeepSeek',
-      description: 'deepseek-v4-pro',
-      protocol: 'openai-compatible',
+      id: 'anthropic-compatible',
+      displayName: 'Anthropic Compatible',
+      description: 'Anthropic 兼容模型供应商',
+      protocol: 'anthropic-compatible',
+      capabilityKinds: ['text'],
       enabled: false,
       apiKeyConfigured: false,
-      models: ['deepseek-v4-pro'],
+      authType: 'api-key',
+      models: ['claude-sonnet-4-5', 'claude-opus-4-1'],
+    },
+    {
+      id: 'local',
+      displayName: 'Local Runtime',
+      description: '本地模型运行时',
+      protocol: 'local',
+      capabilityKinds: ['text'],
+      enabled: false,
+      apiKeyConfigured: true,
+      authType: 'none',
+      models: ['local-default'],
     },
   ];
 }
@@ -2366,52 +2579,14 @@ function normalizeModelProviders(
   version?: string,
 ): PlatformModelProviderProjection[] {
   const preferred = createDefaultModelProviderProjection(version);
-  const normalized = mergeModelProviders(preferred, providers.map(normalizeProviderId));
-  return normalized.map((provider) => {
-    if (provider.id === 'deepseek') {
-      return {
-        ...provider,
-        displayName: 'DeepSeek',
-        description: provider.description ?? 'deepseek-v4-pro',
-        protocol: provider.protocol ?? 'openai-compatible',
-        enabled: true,
-        apiKeyConfigured: provider.apiKeyConfigured ?? Boolean(version),
-        models: provider.models.length > 0 ? provider.models : ['deepseek-v4-pro'],
-      };
-    }
-    if (provider.id === 'claude') {
-      return {
-        ...provider,
-        displayName: '默认 (Claude)',
-        description: provider.description ?? 'Use the default model',
-        enabled: true,
-        apiKeyConfigured: true,
-      };
-    }
-    return provider;
-  }).filter((provider) => hasProviderIcon(provider.id));
-}
-
-function normalizeProviderId(provider: PlatformModelProviderProjection): PlatformModelProviderProjection {
-  if (provider.id === 'openai-compatible') {
-    return {
-      ...provider,
-      id: 'deepseek',
-      displayName: 'DeepSeek',
-      description: 'deepseek-v4-pro',
-      models: provider.models.includes('deepseek-v4-pro') ? provider.models : ['deepseek-v4-pro', ...provider.models],
-    };
-  }
-  if (provider.id === 'anthropic-compatible') {
-    return {
-      ...provider,
-      id: 'claude',
-      displayName: '默认 (Claude)',
-      description: 'Use the default model',
-      models: provider.models.length > 0 ? provider.models : ['Use the default model (currently Sonnet 4.6)'],
-    };
-  }
-  return provider;
+  const normalized = mergeModelProviders(preferred, providers);
+  return normalized.map((provider) => ({
+    ...provider,
+    authType: provider.authType ?? (provider.protocol === 'local' ? 'none' : 'api-key'),
+    enabled: provider.enabled ?? false,
+    apiKeyConfigured: provider.apiKeyConfigured ?? false,
+    models: provider.models.length > 0 ? provider.models : ['default-model'],
+  }));
 }
 
 function mergeModelProviders(
@@ -2439,22 +2614,72 @@ function mergeModelProvider(
 
 function createProviderDraft(provider: PlatformModelProviderProjection): ProviderDraftState {
   return {
-    apiKey: provider.apiKeyConfigured ? '••••••••••••••••••••••••••••••••' : '',
+    apiKey: '',
+    apiKeyConfigured: provider.apiKeyConfigured ?? false,
+    authType: provider.authType ?? (normalizeModelProtocol(provider.protocol) === 'local' ? 'none' : 'api-key'),
+    baseUrl: provider.baseUrl ?? '',
+    displayName: provider.displayName,
+    enabled: provider.enabled ?? false,
     modelInput: '',
     models: provider.models.length > 0 ? provider.models : ['default-model'],
+    protocol: normalizeModelProtocol(provider.protocol),
+    useResponsesApi: provider.useResponsesApi ?? normalizeModelProtocol(provider.protocol) === 'openai-compatible',
   };
 }
 
 function createProviderProjectionFromCatalogOption(option: ProviderCatalogOption): PlatformModelProviderProjection {
+  const protocol = normalizeModelProtocol(option.protocol);
   return {
     id: option.id,
     displayName: option.title,
     description: option.subtitle,
-    protocol: option.protocol,
+    protocol,
     enabled: true,
     apiKeyConfigured: false,
+    authType: protocol === 'local' ? 'none' : 'api-key',
+    useResponsesApi: protocol === 'openai-compatible',
     models: option.models,
   };
+}
+
+export function buildModelSettingsFromDrafts(input: BuildModelSettingsFromDraftsInput): ModelSettings {
+  const providers = input.providers.map((provider) => {
+    const draft = input.drafts[provider.id] ?? createProviderDraft(provider);
+    const models = draft.models.map((model) => model.trim()).filter(Boolean);
+    const apiKey = draft.authType === 'none' ? '' : draft.apiKey.trim();
+    const apiKeyConfigured = draft.authType === 'none' ? true : draft.apiKeyConfigured || draft.apiKey.trim().length > 0;
+    return {
+      id: provider.id,
+      displayName: draft.displayName.trim() || provider.displayName,
+      protocol: draft.protocol,
+      capabilityKinds: provider.capabilityKinds ?? (['text'] as ModelProviderConfig['capabilityKinds']),
+      enabled: draft.enabled,
+      apiKeyConfigured,
+      apiKey: apiKey || undefined,
+      authType: draft.authType,
+      baseUrl: draft.baseUrl.trim() || undefined,
+      useResponsesApi: draft.protocol === 'openai-compatible' ? draft.useResponsesApi : undefined,
+      models: models.length > 0 ? models : ['default-model'],
+    };
+  });
+  const selectedProvider = providers.find((provider) => provider.id === input.selectedProviderId) ?? providers[0];
+  return {
+    version: input.current.version ?? '0',
+    updatedAt: input.current.updatedAt ?? new Date().toISOString(),
+    defaultAgentProviderId: selectedProvider?.id,
+    defaultTextModelId: selectedProvider?.models[0] ?? input.current.defaultTextModelId,
+    providers,
+  };
+}
+
+function normalizeModelProtocol(protocol?: ModelProviderConfig['protocol'] | string): ModelProviderConfig['protocol'] {
+  if (protocol === 'gemini') {
+    return 'gemini-native';
+  }
+  if (protocol === 'anthropic-compatible' || protocol === 'gemini-native' || protocol === 'local') {
+    return protocol;
+  }
+  return 'openai-compatible';
 }
 
 function getProviderIconKey(providerId: string): ProviderIconKey | undefined {
@@ -2463,7 +2688,7 @@ function getProviderIconKey(providerId: string): ProviderIconKey | undefined {
     anthropic: 'claude',
     'anthropic-compatible': 'claude',
     deepseek: 'deepseek',
-    'openai-compatible': 'deepseek',
+    'openai-compatible': 'openai',
     'kimi-coding-plan': 'kimi',
     kimi: 'kimi',
     moonshot: 'kimi',
@@ -2477,6 +2702,7 @@ function getProviderIconKey(providerId: string): ProviderIconKey | undefined {
     gemini: 'gemini',
     google: 'gemini',
     ollama: 'ollama',
+    local: 'ollama',
     'lm-studio': 'lmstudio',
     lmstudio: 'lmstudio',
     'custom-provider': 'custom',
@@ -2655,6 +2881,12 @@ const platformSettingsStyles = `
   color: #1d2329;
   box-shadow: 0 1px 2px rgba(31, 45, 56, 0.08);
 }
+.lime-settings-nav-section {
+  margin: 14px 10px 5px;
+  color: #8b98a3;
+  font-size: 11px;
+  font-weight: 650;
+}
 .lime-settings-content {
   position: relative;
   overflow: auto;
@@ -2790,6 +3022,31 @@ const platformSettingsStyles = `
   padding: 14px;
   font-size: 12px;
   line-height: 1.55;
+}
+.lime-product-settings-extension {
+  display: grid;
+  gap: 16px;
+}
+.lime-settings-extension-boundary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border: 1px solid #dbe3e8;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #3a4650;
+  padding: 12px 14px;
+  font-size: 12px;
+}
+.lime-settings-extension-boundary strong,
+.lime-settings-extension-boundary span {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lime-settings-extension-boundary span {
+  color: #8a96a0;
 }
 .lime-theme-settings {
   display: grid;
@@ -3545,19 +3802,56 @@ const platformSettingsStyles = `
   font-size: 13px;
   font-weight: 650;
 }
+.lime-model-ready-banner.pending {
+  background: #fff6de;
+  color: #7b5200;
+}
+.lime-model-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
 .lime-model-field {
   display: grid;
   gap: 7px;
   color: #8a96a0;
   font-size: 12px;
 }
-.lime-model-field input {
+.lime-model-field input,
+.lime-model-field select {
   height: 34px;
   border: 1px solid #e4e9ed;
   border-radius: 999px;
   background: #ffffff;
   color: #3a4650;
   padding: 0 14px;
+}
+.lime-model-field select {
+  appearance: none;
+}
+.lime-model-toggle-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid #e4e9ed;
+  border-radius: 12px;
+  background: #fbfcfd;
+  padding: 10px 12px;
+}
+.lime-model-toggle-row strong,
+.lime-model-toggle-row span {
+  display: block;
+}
+.lime-model-toggle-row strong {
+  color: #34424c;
+  font-size: 12px;
+}
+.lime-model-toggle-row span {
+  margin-top: 4px;
+  color: #8a96a0;
+  font-size: 11px;
+  line-height: 1.45;
 }
 .lime-model-priority {
   display: grid;
@@ -3631,7 +3925,13 @@ const platformSettingsStyles = `
 .lime-model-add-priority button {
   white-space: nowrap;
 }
+.lime-model-card-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
 .lime-model-test-button,
+.lime-model-save-button,
 .lime-model-intent-link {
   height: 34px;
   border: 1px solid #596672;
@@ -3640,8 +3940,22 @@ const platformSettingsStyles = `
   color: #4d5b66;
   cursor: pointer;
 }
+.lime-model-save-button {
+  background: #3f4a54;
+  color: #ffffff;
+}
 .lime-model-intent-link {
   max-width: 528px;
+}
+.lime-model-status {
+  max-width: 528px;
+  border: 1px solid #dfe7ec;
+  border-radius: 12px;
+  background: #fbfcfd;
+  color: #596672;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 .lime-model-catalog {
   display: grid;

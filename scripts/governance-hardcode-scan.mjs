@@ -1,9 +1,9 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, extname, join, relative, resolve } from 'node:path';
 import { readdirSync } from 'node:fs';
 
 const projectRoot = resolve(new URL('..', import.meta.url).pathname);
-const scannedRoots = ['src/main', 'src/shared', 'packages/contracts/src'];
+const scannedRoots = ['src/main', 'src/shared', 'packages/contracts/src', 'packages/host-core/src'];
 const runtimeCatalogRoot = 'samples';
 const blockedPatterns = [
   /zhongcao/i,
@@ -16,6 +16,15 @@ const blockedPatterns = [
 ];
 const blockedRuntimeCatalogPatterns = [/zhongcao/i, /lime\.zhongcao/i, /content-studio/i, /oem-starter/i];
 const blockedProviderSdkContractPatterns = [/@anthropic-ai\/claude-agent-sdk/, /@mariozechner\/pi-ai/, /@mariozechner\/pi-coding-agent/];
+const deadAgentRuntimePatterns = [
+  /claude-sdk/,
+  /pi-sidecar/,
+  /ClaudeSdkExecutionBackend/,
+  /PiSidecarExecutionBackend/,
+  /AgentExecutionBackendRouter/,
+  /AgentExecutionService/,
+];
+const deadAgentRuntimePaths = ['src/main/services/agentExecution', 'src/main/services/agentExecutionService.ts'];
 const deprecatedRendererModulePatterns = [/src\/renderer\/src\/platformModules\.tsx/, /from ['"]\.\/platformModules['"]/];
 const allowedExtensions = new Set(['.ts', '.tsx', '.js', '.mjs', '.json', '.md']);
 
@@ -123,12 +132,32 @@ const deprecatedRendererModuleViolations = collectFiles('src/renderer').flatMap(
   });
 });
 
+const deadAgentRuntimeViolations = collectFiles('src/main/services').flatMap((filePath) => {
+  const relativePath = relative(projectRoot, filePath);
+  const content = readFileSync(filePath, 'utf8');
+  return deadAgentRuntimePatterns.flatMap((pattern) => {
+    if (!pattern.test(content)) {
+      return [];
+    }
+    return [`${relativePath} -> dead App Server runtime path references ${pattern.source}`];
+  });
+});
+
+const deadAgentRuntimePathViolations = deadAgentRuntimePaths.flatMap((legacyPath) => {
+  if (!existsSync(join(projectRoot, legacyPath))) {
+    return [];
+  }
+  return [`${legacyPath} -> deleted legacy AgentExecution runtime path must not return`];
+});
+
 if (
   violations.length > 0 ||
   runtimeCatalogViolations.length > 0 ||
   externalProductReferenceViolations.length > 0 ||
   providerSdkContractViolations.length > 0 ||
-  deprecatedRendererModuleViolations.length > 0
+  deprecatedRendererModuleViolations.length > 0 ||
+  deadAgentRuntimeViolations.length > 0 ||
+  deadAgentRuntimePathViolations.length > 0
 ) {
   console.error('平台核心目录发现业务硬编码：');
   for (const violation of violations) {
@@ -146,8 +175,14 @@ if (
   for (const violation of deprecatedRendererModuleViolations) {
     console.error(`- ${violation}`);
   }
+  for (const violation of deadAgentRuntimeViolations) {
+    console.error(`- ${violation}`);
+  }
+  for (const violation of deadAgentRuntimePathViolations) {
+    console.error(`- ${violation}`);
+  }
   console.error('业务 App 样板只能作为 external-product-reference 文档参照；平台运行时 catalog 只能使用中性 conformance fixture。');
-  console.error('Claude SDK / Pi SDK 只能进入 host-core backend adapter 或 sidecar，不能进入公开 contracts。');
+  console.error('Pi agent / Claude SDK 已从 current 运行时退场；Agent 能力必须走 App Server JSON-RPC bridge。');
   console.error('公共 React UI modules 只能从 @limecloud/desktop-platform-react / packages/react 暴露，不能回流到 renderer 内部 platformModules。');
   process.exit(1);
 }

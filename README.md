@@ -1,7 +1,9 @@
 # Lime Desktop Platform
 
+当前版本：`0.1.5`。
+
 `lime-desktop-platform` 是 Lime 组织桌面产品线的公共底座，不是单一业务 App。
-它负责承接 Agent App 宿主、应用中心、模型设置、OAuth、OEM、充值、更新和跨 App 复用协议，
+它负责承接 Agent App 宿主、应用中心、通用设置、模型 provider 设置、OAuth、OEM、充值、更新、Product App 独特设置托管和跨 App 复用协议，
 并为后续 `content-studio`、`zhongcao` 和其他 OEM Electron App 提供统一宿主能力。这些 Product App
 都在各自仓库独立运行，不是平台 App 的子 App，也不会作为平台仓库内置同名 App 出现在应用中心。
 
@@ -43,12 +45,17 @@ v1 第一刀已经落到 `src/`：
 - `packages/contracts/`：业务 App 可消费的公开协议类型包。
 - `samples/platform-conformance/`：平台自用中性 conformance fixture。其他真实产品名样板只允许作为 `external-product-reference` 文档参照，不进入平台运行时 catalog。
 
-Claude SDK、Pi 和 MCP session tools 的参考策略已落在 `docs/v1/agent-runtime-strategy.md`。它们后续只能作为平台 `AgentExecutionService` 后面的 backend adapter / sidecar，不是 Product App 的直接依赖。
+Agent Runtime current 主链是 Product App -> Capability SDK 调用 `lime.agent` -> Desktop Host / Host Bridge -> Lime App Server JSON-RPC -> RuntimeCore：旧 `lime.agentExecution` 仅作为 compat alias。Pi agent 和 Claude SDK 不再作为 current/proposed 后端路线，也不是 Product App 的直接依赖。模型设置保存时会通过 App Server JSON-RPC `modelProvider*` / `modelProviderKey/create` 做受控 provider/key provisioning；运行时 turn 只传 App Server provider id、model id 和非敏感 `AgentRuntimeContext`，不传明文 key。
+
+`0.1.5` 已物理删除旧 `src/main/services/agentExecution/**` 和 `agentExecutionService.ts`，并通过 `governance:hardcode-scan` 阻止 Pi sidecar、Claude SDK backend router 和旧 AgentExecutionService 回流。业务 App 的平台入口应使用 `@limecloud/desktop-platform-react`、`@limecloud/desktop-platform-contracts` 和 `@limecloud/desktop-platform-host-core`，不要复制平台基础设置或直接接入 provider SDK。
+
+存储采用独立但分层的本机持久化：平台基础设置写入 Electron `userData/state`，工作区运行事实写入 `.lime-desktop/`，业务 App 独特设置按 `appId + namespace + scope` 写入独立 `product-settings` namespace，且阻断凭证、token、API Key 和 OAuth 类 namespace / key / value。业务 App 的草稿、工作流状态等本地业务数据通过 `lime.storage` 写入宿主管理的 `.lime-desktop/app-storage` workspace document 后端；`lime.storage` 同样阻断凭证类 namespace / documentId / value。模型 API Key、OAuth token 等敏感数据不写入普通 JSON，只能由 Credential Broker 承接；App Server provider sync record 只保存非敏感 provider id / status 映射。
 
 当前仓库事实锁文件是 `package-lock.json`。首次开发先执行：
 
 ```bash
 npm install
+npm run test:unit
 npm run typecheck
 npm run governance:hardcode-scan
 npm run build
@@ -58,5 +65,9 @@ npm run smoke:electron
 当前本仓库已通过正式验证：
 
 ```bash
+npm run governance:hardcode-scan
+npm run test:unit
+npm run build:packages
 npm run verify:local
+npm exec --yes --package vitepress@1.6.4 -- vitepress build docs
 ```

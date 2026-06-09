@@ -241,6 +241,8 @@ Projection 的职责是把 manifest 转成宿主可读对象，不运行 App 代
 - `settings:saveModel`
 - `settings:getPlatform`
 - `settings:savePlatform`
+- `settings:readProductApp`
+- `settings:writeProductApp`
 - `auth:getSession`
 - `auth:login`
 - `auth:logout`
@@ -284,19 +286,106 @@ Projection 的职责是把 manifest 转成宿主可读对象，不运行 App 代
 - 输出：`PlatformNavigationResult`
 - 结果：当前 Electron 实现先写入 runtime event，后续 UI 路由聚焦在壳层补齐。
 
-### 7.4 Agent Execution Capability 规划
+### 7.4 Product App 独特设置
 
-Claude SDK、Pi 和 MCP session tools 不作为 Product App 的公开依赖。业务 App 只能通过平台 capability 发起 agent execution。下一阶段建议增加平台能力：
-
-- capability id：`lime.agentExecution`
-- 入口：`apps.invokeCapability({ capability: 'lime.agentExecution', operation: 'start' })`
-- 事件：统一归一化为 `AgentExecutionEvent`
-- 后端：`ClaudeSdkExecutionBackend`、`PiExecutionBackend`、`GenericTextBackend`、`BlockedBackend`
-
-规划契约：
+平台基础设置统一由 `lime-desktop-platform` 承载：账号、模型 provider、网络、搜索、开放网关、数据、安全、更新、关于等都属于平台页。业务 App 只允许开放自己的独特设置入口，并通过 `appId + namespace + scope` 写入平台托管 namespace。
 
 ```ts
-export interface AgentExecutionRequest {
+export type ProductAppSettingsScope = 'user' | 'workspace';
+
+export interface ProductAppSettingsRecord<TValue = Record<string, unknown>> {
+  appId: string;
+  namespace: string;
+  scope: ProductAppSettingsScope;
+  version: string;
+  updatedAt: string;
+  value: TValue;
+}
+
+export interface ProductAppSettingsReadInput {
+  appId: string;
+  namespace: string;
+  scope?: ProductAppSettingsScope;
+}
+
+export interface ProductAppSettingsWriteInput<TValue = Record<string, unknown>> extends ProductAppSettingsReadInput {
+  value: TValue;
+}
+```
+
+存储落点：
+
+- `scope: 'workspace'`：`.lime-desktop/product-settings/<appId>/<namespace>.json`
+- `scope: 'user'`：Electron `userData/state/product-settings/<appId>/<namespace>.json`
+
+Product App 独特设置不得保存 OAuth token、模型 API Key、billing 账本或平台权限权威状态；凭证、token、API Key 和 OAuth 类 namespace / key 会被宿主拒绝。密钥只允许 Credential Broker 保存。
+
+### 7.5 Agent Runtime Capability
+
+Agent Runtime current 路线是 Lime App Server JSON-RPC / RuntimeCore。Claude SDK、Pi 和 MCP session tools 不作为 Product App 的公开依赖，也不再作为当前 platform backend 路线。业务 App 只能通过平台 capability 发起 agent runtime：
+
+- current capability id：`lime.agent`
+- compat alias：`lime.agentExecution`
+- 入口：`apps.invokeCapability({ capability: 'lime.agent', operation: 'start' })`
+- bridge profile：`agentRuntime.bridge.kind = 'app-server-json-rpc'`
+- 运行时 owner：Lime App Server `RuntimeCore`
+- Electron 职责：Desktop Host IPC、preload 白名单、sidecar 生命周期和 fail-closed bridge，不承接第二套 Agent 后端。
+
+模型设置的执行时投影由 Desktop Host 生成，不由 Product App 生成：
+
+- 平台设置中心是 provider/model 设置事实源。
+- App Server / RuntimeCore 是 agent runtime 执行事实源。
+- Product App 不能传 provider key、OAuth token、refresh token、billing 原始账本或平台设置副本。
+- Desktop Host 保存模型设置时，必须通过 App Server JSON-RPC `modelProvider/list/read/create/update` 同步 provider metadata，并且只在这个设置同步边界调用 `modelProviderKey/create` 写入 API Key；App Server 返回的真实 provider id 作为非敏感 sync record 保存。
+- Desktop Host 调用 App Server JSON-RPC runtime 前，必须把设置中心解析成 `AgentRuntimeContext`。
+- `AgentRuntimeContext.modelProfile` 是 Desktop Host 对 RuntimeCore 暴露的唯一模型配置投影。
+- `agentSession/start` 必须只发送 App Server 当前 schema 接收的 session 字段；provider / model 选择同步投影为 `agentSession/turn/start.params.runtimeOptions.providerPreference` / `runtimeOptions.modelPreference`，其中 `providerPreference` 优先使用 App Server provider id。同一份非敏感上下文放入 `runtimeOptions.hostOptions.desktopPlatformRuntimeContext`。禁止把 `runtimeContext` 写到 App Server 当前不消费的 `agentSession/start.params.runtimeContext` 或 `runtimeOptions.runtimeContext` 假字段。
+- 密钥只能通过 `credentialRef` 表达，resolver 固定为 `desktop-host-credential-broker`。
+- 当前最小 Credential Broker 已接入，普通 `ModelSettings` JSON 只保留 `apiKeyConfigured`；runtime turn JSON-RPC payload、Host Snapshot、runtime event 和 Product App settings 不能包含明文 secret。`modelProviderKey/create` 属于设置同步控制面；`modelProviderKey/next` 会返回明文 key，Desktop Host 不在 Product App invoke 路径调用。OS keychain、OAuth token 轮换和生产级 credential injection 仍是后续项。
+
+当前请求契约：
+
+```ts
+export interface AgentRuntimeCredentialRef {
+  kind: 'model-provider';
+  providerId: string;
+  authType: NonNullable<ModelProviderConfig['authType']>;
+  resolver: 'desktop-host-credential-broker';
+  configured: boolean;
+}
+
+export interface AgentRuntimeProviderProfile {
+  id: string;
+  protocol: ModelProtocol;
+  authType: NonNullable<ModelProviderConfig['authType']>;
+  baseUrl?: string;
+  useResponsesApi?: boolean;
+  capabilityKinds: ModelCapabilityKind[];
+  credentialConfigured: boolean;
+  credentialRef?: AgentRuntimeCredentialRef;
+}
+
+export interface AgentRuntimeModelProfile {
+  settingsVersion: string;
+  provider: AgentRuntimeProviderProfile;
+  modelId: string;
+  requestedModelId?: string;
+  capability: 'text' | 'agent' | 'vision';
+}
+
+export interface AgentRuntimeContext {
+  protocol: 'appserver.runtimeContext';
+  version: 1;
+  source: 'desktop-platform-model-settings';
+  modelProfile?: AgentRuntimeModelProfile;
+  permissionMode: 'safe' | 'ask' | 'allow-all';
+  credentialPolicy: {
+    handoff: 'credential-ref-only';
+    plaintextSecrets: false;
+  };
+}
+
+export interface AgentRuntimeRequest {
   appId: string;
   entryKey: string;
   agentAppId?: string;
@@ -315,17 +404,41 @@ export interface AgentExecutionRequest {
     allowedToolIds?: string[];
     permissionMode?: 'safe' | 'ask' | 'allow-all';
   };
+  runtimeContext?: AgentRuntimeContext;
+  runtimeOptions?: {
+    capabilityId?: string;
+    workflowId?: string;
+    modelId?: string;
+    permissionMode?: 'safe' | 'ask' | 'allow-all';
+  };
 }
 
-export interface AgentExecutionEvent {
+export interface AppServerRuntimeOptionsProjection {
+  capabilityId?: string;
+  stream: true;
+  providerPreference?: string;
+  modelPreference?: string;
+  metadata?: {
+    workflowId?: string;
+    requestedModelId?: string;
+    permissionMode?: 'safe' | 'ask' | 'allow-all';
+  };
+  hostOptions: {
+    desktopPlatformRuntimeContext: AgentRuntimeContext;
+  };
+}
+
+export interface AgentRuntimeEvent {
   sessionId: string;
+  threadId?: string;
+  turnId?: string;
   sequence: number;
   type:
     | 'started'
-    | 'assistant-delta'
-    | 'tool-call'
-    | 'tool-result'
-    | 'permission-request'
+    | 'message.delta'
+    | 'tool.call'
+    | 'tool.result'
+    | 'action.required'
     | 'needs-setup'
     | 'blocked'
     | 'completed'
@@ -338,14 +451,23 @@ export interface AgentExecutionEvent {
 }
 ```
 
-进入 `packages/contracts` 前必须满足：
+必须满足：
 
 - 与 `agentapp` 的 capability、readiness 和 Host Bridge 语义对齐。
-- 不泄露 Claude SDK、Pi SDK、MCP SDK 的 provider-specific 类型。
-- 缺模型、缺 OAuth、缺 billing entitlement、backend 未安装时只返回 `needs-setup` 或 `blocked`。
-- 工具调用必须经过平台 Tool Registry 和 Permission Pipeline。
+- 不泄露 Pi agent、Claude SDK、MCP SDK 的 provider-specific 类型。
+- 缺模型、缺 OAuth、缺 billing entitlement、App Server client 未连接时只返回 `needs-setup` 或 `blocked`。
+- 生产路径不能回退 mock backend、已删除的旧 `AgentExecutionService`、Pi sidecar 或 Claude SDK backend。
+- 工具调用必须由 RuntimeCore 和平台 permission/readiness 策略裁决。
+- App Server client 未配置、未连接或握手失败时，fail-closed `blocked` event/result 仍必须携带同一份非敏感 `runtimeContext`，用于验证 Desktop Host handoff 形状；配置化 stdio sidecar 或注入测试 client 时可以进入 `started` 路径。
+- `runtimeContext`、Host Snapshot、Product App 设置、runtime event 和 JSON-RPC payload 都不得出现 `apiKey`、`token`、`secret`、`refreshToken` 这类明文字段。
 
 ## 8. 存储契约
+
+结论：平台需要独立托管存储层，但不要求每个业务 App 自己再维护一套平台状态库。存储按职责分三层：
+
+- 平台公共状态：应用中心、模型 provider、OAuth 投影、billing、OEM、更新、diagnostics，由 `lime-desktop-platform` 统一保存和裁决。
+- Product App 独特设置：轻量偏好、展示开关、业务设置表单值，由平台按 `appId + namespace + scope` 托管。
+- Product App 业务数据：日记、草稿、客户事实和工作流状态通过 `lime.storage` 能力进入宿主管理的 per-app storage；领域表、索引和 migration 后续由 SQLite backend 承接，不能塞进 `product-settings` JSON。
 
 ### 8.1 工作区级
 
@@ -354,12 +476,15 @@ export interface AgentExecutionEvent {
 - `.lime-desktop/runtime-snapshots.json`
 - `.lime-desktop/runtime-events.json`
 - `.lime-desktop/app-artifacts/`
+- `.lime-desktop/app-storage/workspace/<appId>/<namespace>/<documentId>.json`
+- `.lime-desktop/product-settings/<appId>/<namespace>.json`
 
 ### 8.2 用户级
 
 - `userData` 下保存 OAuth 会话
 - `userData` 下保存模型设置、OEM 选择和平台偏好
 - `userData` 下保存下载缓存和更新状态
+- `userData/state/product-settings/<appId>/<namespace>.json` 保存用户级业务 App 独特设置
 
 ### 8.3 原则
 
@@ -367,6 +492,14 @@ export interface AgentExecutionEvent {
 - 用户目录只放个人设置、会话和缓存。
 - 不硬编码系统路径。
 - 本地存储必须能被重新扫描和重建。
+- 平台基础设置、业务 App 独特设置和业务 App 数据库必须分 namespace；业务 App 不能把平台基础设置复制成私有事实。
+- `product-settings` 只保存小型 JSON 设置，不承接列表、草稿、历史记录、artifact、客户数据或可迁移业务表。
+- `product-settings` 禁止保存 credential、secret、token、API Key 或 OAuth namespace / key；这些数据必须走 Credential Broker。
+- `appId` 和 `namespace` 必须是稳定标识，不允许路径穿越或运行时生成的随机值。
+- `lime.storage` 当前提供 workspace scope JSON document 最小后端，支持 `read` / `write` / `list` / `delete`，不支持任意表查询、索引和 migration。
+- `lime.storage` 写事件只记录 namespace、documentId、scope 和 valueRedacted，不把业务 value 复制进 runtime event。
+- `lime.storage` 禁止保存 credential、secret、token、API Key 或 OAuth namespace；这些数据必须走 Credential Broker。
+- 桌面端后续默认升级为宿主管理的 per-app SQLite；普通用户不应为了运行桌面 Product App 额外安装 PostgreSQL。团队 / 云端共享数据再由 App Server / Cloud 使用 per-app schema、role 或 dedicated database。
 
 ## 9. 兼容性规则
 

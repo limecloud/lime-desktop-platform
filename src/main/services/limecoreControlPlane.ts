@@ -29,6 +29,8 @@ function isPlatformCapability(value: string): value is PlatformCapability {
     'lime.download',
     'lime.permissions',
     'lime.diagnostics',
+    'lime.storage',
+    'lime.agent',
     'lime.agentExecution',
   ].includes(value);
 }

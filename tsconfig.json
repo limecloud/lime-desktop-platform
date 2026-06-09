@@ -15,6 +15,7 @@
     "baseUrl": ".",
     "paths": {
       "@limecloud/desktop-platform-contracts": ["packages/contracts/src/index.ts"],
+      "@limecloud/desktop-platform-host-core": ["packages/host-core/src/index.ts"],
       "@limecloud/desktop-platform-react": ["packages/react/src/index.tsx"],
       "@shared/*": ["src/shared/*"],
       "@main/*": ["src/main/*"],

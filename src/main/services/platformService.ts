@@ -5,12 +5,30 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { app } from 'electron';
 import { seedCatalog } from './seedCatalog';
-import { AgentExecutionService } from './agentExecution';
+import { AppServerSidecarLifecycle, resolveAppServerSidecarLaunchConfig } from './appServerJsonRpcClient';
+import { AppServerRuntimeService } from './appServerRuntimeService';
+import type { AppServerJsonRpcClient } from './appServerJsonRpcClient';
+import type { AppServerRuntimeClientProvider } from './appServerRuntimeService';
+import { createSafeCapabilityEventPayload } from './capabilityEventPayload';
+import { CredentialBroker } from './credentialBroker';
 import { LimecoreControlPlane } from './limecoreControlPlane';
+import {
+  applyModelSettingsCredentials,
+  projectModelSettingsCredentialState,
+  readModelProviderCredentialState,
+} from './modelSettingsCredentials';
 import { PlatformStore } from './platformStore';
 import { downloadAndVerifyReleaseArtifact } from './releaseDownloader';
 import { RuntimeBridgeServer } from './runtimeBridgeServer';
 import type {
+  AppStorageDeleteResult,
+  AppStorageDocument,
+  AppStorageDeleteInput,
+  AppStorageListInput,
+  AppStorageListResult,
+  AppStorageOperation,
+  AppStorageReadInput,
+  AppStorageWriteInput,
   BillingSnapshot,
   CapabilityInvokeInput,
   CapabilityInvokeResult,
@@ -26,12 +44,16 @@ import type {
   LaunchEntryInput,
   LaunchEntryResult,
   LoginInput,
+  ModelProviderAppServerSyncRecord,
   ModelSettings,
   PlatformBootstrap,
   PlatformCapability,
   PlatformNavigationIntent,
   PlatformNavigationResult,
   PlatformSettings,
+  ProductAppSettingsReadInput,
+  ProductAppSettingsRecord,
+  ProductAppSettingsWriteInput,
   ReadinessReason,
   ReadinessResult,
   RuntimeEvent,
@@ -48,6 +70,17 @@ function nowIso(): string {
 
 function hashValue(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
 }
 
 function stateToLifecycleState(state: ReadinessResult['state']): InstalledAppRecord['status'] {
@@ -72,9 +105,11 @@ function entryLabel(entry: DesktopAppManifest['entries'][number]): string {
 
 export class PlatformService {
   private readonly store = new PlatformStore();
+  private readonly credentialBroker = new CredentialBroker(this.store.getCredentialBrokerDir());
   private catalog = seedCatalog;
   private readonly controlPlane = new LimecoreControlPlane();
-  private readonly agentExecution = new AgentExecutionService();
+  private readonly appServerSidecar?: AppServerSidecarLifecycle;
+  private readonly appServerRuntime: AppServerRuntimeService;
   private readonly childProcesses = new Map<string, ChildProcess>();
   private readonly runtimeBridge = new RuntimeBridgeServer(
     (input) => this.invokeCapability(input),
@@ -82,6 +117,31 @@ export class PlatformService {
   );
   private lastCatalogSyncAt = 0;
   private lastControlPlaneProjectionSyncAt = 0;
+
+  constructor(private readonly appServerClientProvider?: AppServerRuntimeClientProvider) {
+    this.appServerSidecar = appServerClientProvider ? undefined : this.createAppServerSidecarLifecycle();
+    const runtimeClientProvider = this.appServerSidecar
+      ? {
+          getClient: () => this.appServerSidecar?.getClient(),
+          isConnected: () => Boolean(this.appServerSidecar?.connected),
+          isConfigured: () => true,
+        }
+      : this.appServerClientProvider;
+    this.appServerRuntime = new AppServerRuntimeService(
+      runtimeClientProvider,
+      (provider) =>
+        readModelProviderCredentialState(
+          provider,
+          this.credentialBroker,
+          this.store.readModelProviderAppServerSyncRecords()[provider.id],
+        ),
+    );
+  }
+
+  private createAppServerSidecarLifecycle(): AppServerSidecarLifecycle | undefined {
+    const config = resolveAppServerSidecarLaunchConfig();
+    return config ? new AppServerSidecarLifecycle(config) : undefined;
+  }
 
   async getBootstrap(): Promise<PlatformBootstrap> {
     await this.syncCatalog();
@@ -346,25 +406,25 @@ export class PlatformService {
     };
   }
 
-  invokeCapability(input: CapabilityInvokeInput): CapabilityInvokeResult {
+  async invokeCapability(input: CapabilityInvokeInput): Promise<CapabilityInvokeResult> {
     const requestId = randomUUID();
-    const output = this.resolveCapabilityOutput(input);
+    const output = await this.resolveCapabilityOutput(input);
     const ok = output !== undefined;
-    const agentExecutionBlocked =
-      input.capability === 'lime.agentExecution' &&
+    const agentRuntimeBlocked =
+      this.isAgentRuntimeCapability(input.capability) &&
       typeof output === 'object' &&
       output !== null &&
       'ok' in output &&
       (output as { ok?: unknown }).ok === false;
     const event = this.appendEvent({
-      level: ok && !agentExecutionBlocked ? 'info' : 'error',
+      level: ok && !agentRuntimeBlocked ? 'info' : 'error',
       appId: input.appId,
       entryKey: input.entryKey,
       message:
-        ok && !agentExecutionBlocked
+        ok && !agentRuntimeBlocked
           ? `能力调用成功：${input.capability}`
           : `能力调用被阻断：${input.capability}`,
-      payload: { operation: input.operation, input: input.input },
+      payload: this.createCapabilityEventPayload(input),
     });
 
     if (!ok) {
@@ -379,17 +439,17 @@ export class PlatformService {
       };
     }
 
-    if (agentExecutionBlocked) {
+    if (agentRuntimeBlocked) {
       return {
         ok: false,
         requestId,
         output,
         error: {
-          code: 'agent-execution-blocked',
+          code: 'agent-runtime-blocked',
           message:
             typeof output === 'object' && output !== null && 'message' in output && typeof output.message === 'string'
               ? output.message
-              : 'Agent Execution Runtime 当前不可用。',
+              : 'App Server Runtime 当前不可用。',
         },
         event,
       };
@@ -439,19 +499,25 @@ export class PlatformService {
   }
 
   getModelSettings(): ModelSettings {
-    return this.store.readModelSettings();
+    return projectModelSettingsCredentialState(
+      this.store.readModelSettings(),
+      this.credentialBroker,
+      this.store.readModelProviderAppServerSyncRecords(),
+    );
   }
 
-  saveModelSettings(settings: ModelSettings): ModelSettings {
+  async saveModelSettings(settings: ModelSettings): Promise<ModelSettings> {
+    const sanitizedSettings = applyModelSettingsCredentials(settings, this.credentialBroker);
     const nextSettings: ModelSettings = {
-      ...settings,
+      ...sanitizedSettings,
       version: String(Number(settings.version || '0') + 1),
       updatedAt: nowIso(),
     };
     this.store.writeModelSettings(nextSettings);
+    await this.syncModelProvidersToAppServer(nextSettings);
     this.refreshAllProjections();
     this.appendEvent({ level: 'info', message: '模型设置已保存并重新计算 projection。' });
-    return nextSettings;
+    return this.getModelSettings();
   }
 
   getPlatformSettings(): PlatformSettings {
@@ -468,6 +534,121 @@ export class PlatformService {
     this.refreshAllProjections();
     this.appendEvent({ level: 'info', message: '平台设置已保存。' });
     return nextSettings;
+  }
+
+  private async syncModelProvidersToAppServer(settings: ModelSettings): Promise<void> {
+    const records = this.store.readModelProviderAppServerSyncRecords();
+    if (!this.appServerSidecar && !this.appServerClientProvider?.isConfigured()) {
+      const nextRecords = { ...records };
+      for (const provider of settings.providers) {
+        if (!provider.enabled || (provider.authType ?? 'api-key') === 'none') {
+          continue;
+        }
+        nextRecords[provider.id] = {
+          ...records[provider.id],
+          desktopProviderId: provider.id,
+          status: 'failed',
+          settingsVersion: settings.version,
+          lastError: 'App Server JSON-RPC sidecar 未配置。',
+          plaintextSecrets: false,
+        };
+      }
+      this.store.writeModelProviderAppServerSyncRecords(nextRecords);
+      return;
+    }
+
+    const nextRecords: Record<string, ModelProviderAppServerSyncRecord> = { ...records };
+    for (const provider of settings.providers) {
+      const authType = provider.authType ?? 'api-key';
+      if (!provider.enabled || authType === 'oauth') {
+        continue;
+      }
+
+      try {
+        const client: AppServerJsonRpcClient | undefined =
+          this.appServerSidecar?.getClient() ?? this.appServerClientProvider?.getClient();
+        if (!client) {
+          throw new Error('App Server JSON-RPC client 未配置。');
+        }
+        const apiKey =
+          authType === 'api-key'
+            ? this.credentialBroker.resolveModelProviderCredential({ providerId: provider.id, authType })
+            : undefined;
+        const result = await client.syncModelProvider({
+          provider,
+          settingsVersion: settings.version,
+          apiKey,
+          previousSyncRecord: records[provider.id],
+        });
+        nextRecords[provider.id] = result.record;
+        this.appendEvent({
+          level: result.record.status === 'synced' ? 'info' : 'warning',
+          message:
+            result.record.status === 'synced'
+              ? '模型 provider 已同步到 App Server JSON-RPC provider store。'
+              : '模型 provider 暂不支持同步到 App Server JSON-RPC provider store。',
+          payload: {
+            providerId: provider.id,
+            status: result.record.status,
+            appServerProviderId: result.record.appServerProviderId,
+            appServerProviderType: result.record.appServerProviderType,
+            credentialSynced: result.credentialSynced,
+            plaintextSecrets: false,
+          },
+        });
+      } catch (error) {
+        nextRecords[provider.id] = {
+          ...records[provider.id],
+          desktopProviderId: provider.id,
+          status: 'failed',
+          settingsVersion: settings.version,
+          lastError: error instanceof Error ? error.message : 'App Server provider sync 失败。',
+          plaintextSecrets: false,
+        };
+        this.appendEvent({
+          level: 'warning',
+          message: '模型 provider 同步到 App Server JSON-RPC provider store 失败，设置已保存但 live runtime 会保持 fail-closed。',
+          payload: {
+            providerId: provider.id,
+            error: nextRecords[provider.id]?.lastError,
+            plaintextSecrets: false,
+          },
+        });
+      }
+    }
+
+    this.store.writeModelProviderAppServerSyncRecords(nextRecords);
+  }
+
+  readProductAppSettings(input: ProductAppSettingsReadInput): ProductAppSettingsRecord {
+    return this.store.readProductAppSettings(input);
+  }
+
+  writeProductAppSettings(input: ProductAppSettingsWriteInput): ProductAppSettingsRecord {
+    const record = this.store.writeProductAppSettings(input);
+    this.appendEvent({
+      level: 'info',
+      appId: record.appId,
+      message: `业务 App 独特设置已保存：${record.namespace} / ${record.scope}`,
+      payload: { namespace: record.namespace, scope: record.scope, version: record.version },
+    });
+    return record;
+  }
+
+  readAppStorage(input: AppStorageReadInput): AppStorageDocument {
+    return this.store.readAppStorageDocument(input);
+  }
+
+  writeAppStorage(input: AppStorageWriteInput): AppStorageDocument {
+    return this.store.writeAppStorageDocument(input);
+  }
+
+  listAppStorage(input: AppStorageListInput): AppStorageListResult {
+    return this.store.listAppStorageDocuments(input);
+  }
+
+  deleteAppStorage(input: AppStorageDeleteInput): AppStorageDeleteResult {
+    return this.store.deleteAppStorageDocument(input);
   }
 
   getAuthSession(): CloudSessionSnapshot {
@@ -723,6 +904,7 @@ export class PlatformService {
       },
       hostProfile: this.getHostProfile(),
       controlPlane: this.controlPlane.getStatus(),
+      appServerRuntime: this.appServerRuntime.describeRuntime(this.getModelSettings()),
       lastEvents: runtimeEvents.slice(-20).reverse(),
     };
   }
@@ -940,6 +1122,8 @@ export class PlatformService {
         'lime.download',
         'lime.permissions',
         'lime.diagnostics',
+        'lime.storage',
+        'lime.agent',
         'lime.agentExecution',
       ],
       locale: platformSettings.locale,
@@ -1084,7 +1268,7 @@ export class PlatformService {
     this.runtimeBridge.revokeApp(appId);
   }
 
-  private resolveCapabilityOutput(input: CapabilityInvokeInput): unknown {
+  private async resolveCapabilityOutput(input: CapabilityInvokeInput): Promise<unknown> {
     const capability = input.capability;
     if (capability === 'lime.cloudSession') {
       return this.getAuthSession();
@@ -1102,17 +1286,85 @@ export class PlatformService {
       return this.createUpdateState();
     }
     if (capability === 'lime.diagnostics') {
-      return {
-        ...this.getDiagnostics(),
-        agentExecution: this.agentExecution.describeRuntime(),
-      };
+      return this.getDiagnostics();
     }
-    if (capability === 'lime.agentExecution') {
-      return this.agentExecution.start(input, {
+    if (capability === 'lime.storage') {
+      return this.invokeAppStorage(input);
+    }
+    if (this.isAgentRuntimeCapability(capability)) {
+      return this.appServerRuntime.start(input, {
         modelSettings: this.getModelSettings(),
+        workspaceId: this.getPlatformSettings().workspacePath,
+        locale: this.getPlatformSettings().locale,
       });
     }
     return undefined;
+  }
+
+  private invokeAppStorage(input: CapabilityInvokeInput):
+    | AppStorageDocument
+    | AppStorageListResult
+    | AppStorageDeleteResult
+    | undefined {
+    const operation = input.operation as AppStorageOperation;
+    const payload = asRecord(input.input);
+    const namespace = optionalString(payload.namespace);
+    const documentId = optionalString(payload.documentId);
+    const scope = optionalString(payload.scope);
+
+    if (!namespace) {
+      throw new Error('lime.storage 调用必须提供 namespace。');
+    }
+
+    if (operation === 'list') {
+      return this.store.listAppStorageDocuments({
+        appId: input.appId,
+        namespace,
+        scope: scope === 'workspace' ? scope : undefined,
+      });
+    }
+
+    if (!documentId) {
+      throw new Error(`lime.storage ${operation} 调用必须提供 documentId。`);
+    }
+
+    if (operation === 'read') {
+      return this.store.readAppStorageDocument({
+        appId: input.appId,
+        namespace,
+        documentId,
+        scope: scope === 'workspace' ? scope : undefined,
+      });
+    }
+
+    if (operation === 'write') {
+      return this.store.writeAppStorageDocument({
+        appId: input.appId,
+        namespace,
+        documentId,
+        scope: scope === 'workspace' ? scope : undefined,
+        value: asRecord(payload.value),
+      });
+    }
+
+    if (operation === 'delete') {
+      return this.store.deleteAppStorageDocument({
+        appId: input.appId,
+        namespace,
+        documentId,
+        scope: scope === 'workspace' ? scope : undefined,
+      });
+    }
+
+    return undefined;
+  }
+
+  private createCapabilityEventPayload(input: CapabilityInvokeInput): Record<string, unknown> {
+    return createSafeCapabilityEventPayload(input);
+  }
+
+  private isAgentRuntimeCapability(capability: PlatformCapability): boolean {
+    return capability === 'lime.agent' || capability === 'lime.agentExecution';
   }
 
   private persistProjection(appId: string): DesktopAppProjection {

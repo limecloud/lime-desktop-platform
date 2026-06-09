@@ -13,7 +13,7 @@ repo: lime-desktop-platform
 这意味着：
 
 - 云端控制面归 `limecore`。
-- 执行事实标准归 `agentruntime`。
+- `lime.agent` 执行事实标准归 Lime App Server JSON-RPC / RuntimeCore。
 - 桌面宿主归 `lime-desktop-platform`。
 - 业务流程归具体 App。
 

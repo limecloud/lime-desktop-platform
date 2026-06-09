@@ -53,7 +53,7 @@ export class RuntimeBridgeServer {
   private sessions = new Map<string, RuntimeBridgeSession>();
 
   constructor(
-    private readonly invokeCapability: (input: CapabilityInvokeInput) => CapabilityInvokeResult,
+    private readonly invokeCapability: (input: CapabilityInvokeInput) => CapabilityInvokeResult | Promise<CapabilityInvokeResult>,
     private readonly openNavigationIntent: (input: PlatformNavigationIntent) => PlatformNavigationResult,
   ) {}
 
@@ -139,7 +139,7 @@ export class RuntimeBridgeServer {
 
       if (request.url === '/capability/invoke') {
         const body = (await readRequestBody(request)) as Partial<CapabilityInvokeInput> | undefined;
-        const result = this.invokeCapability({
+        const result = await this.invokeCapability({
           appId: session.appId,
           entryKey: session.entryKey,
           capability: body?.capability ?? 'lime.diagnostics',
