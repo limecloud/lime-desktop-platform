@@ -57,7 +57,7 @@ body.diagram-zoom-open {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 18px;
   background: color-mix(in srgb, var(--vp-c-bg) 94%, transparent);
   backdrop-filter: blur(8px);
 }
@@ -65,8 +65,8 @@ body.diagram-zoom-open {
 .diagram-zoom-panel {
   display: flex;
   flex-direction: column;
-  width: min(1180px, calc(100vw - 48px));
-  max-height: calc(100vh - 48px);
+  width: min(1440px, calc(100vw - 36px));
+  height: calc(100vh - 36px);
   overflow: hidden;
   border: 1px solid var(--vp-c-divider);
   border-radius: 10px;
@@ -79,20 +79,38 @@ body.diagram-zoom-open {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 10px 12px;
+  min-height: 52px;
+  padding: 9px 12px;
   border-bottom: 1px solid var(--vp-c-divider);
   background: var(--vp-c-bg-soft);
 }
 
-.diagram-zoom-hint {
-  color: var(--vp-c-text-2);
-  font-size: 13px;
+.diagram-zoom-title {
+  color: var(--vp-c-text-1);
+  font-size: 14px;
+  font-weight: 600;
 }
 
-.diagram-zoom-close {
+.diagram-zoom-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.diagram-zoom-scale {
+  min-width: 48px;
+  color: var(--vp-c-text-2);
+  font-size: 13px;
+  text-align: center;
+}
+
+.diagram-zoom-button {
   border: 1px solid var(--vp-c-divider);
   border-radius: 6px;
-  padding: 5px 10px;
+  min-width: 34px;
+  padding: 5px 9px;
   background: var(--vp-c-bg);
   color: var(--vp-c-text-1);
   font-size: 13px;
@@ -100,25 +118,39 @@ body.diagram-zoom-open {
   cursor: pointer;
 }
 
-.diagram-zoom-close:hover,
-.diagram-zoom-close:focus-visible {
+.diagram-zoom-button:hover,
+.diagram-zoom-button:focus-visible {
   border-color: var(--vp-c-brand-2);
   color: var(--vp-c-brand-1);
 }
 
 .diagram-zoom-viewport {
-  overflow: auto;
-  padding: 18px;
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
   background: linear-gradient(135deg, rgba(23, 108, 95, 0.05), rgba(43, 120, 208, 0.04));
+  cursor: grab;
+  outline: none;
 }
 
-.diagram-zoom-viewport svg {
+.diagram-zoom-viewport.is-dragging {
+  cursor: grabbing;
+}
+
+.diagram-zoom-canvas {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform-origin: center center;
+  will-change: transform;
+  user-select: none;
+  touch-action: none;
+}
+
+.diagram-zoom-svg {
   display: block;
-  width: max-content;
-  min-width: 980px;
   max-width: none;
-  height: auto;
-  margin: 0 auto;
   border: 0;
   border-radius: 8px;
   background: #fff;
@@ -127,15 +159,21 @@ body.diagram-zoom-open {
 
 @media (max-width: 640px) {
   .diagram-zoom-overlay {
-    padding: 12px;
+    padding: 8px;
   }
 
   .diagram-zoom-panel {
-    width: calc(100vw - 24px);
-    max-height: calc(100vh - 24px);
+    width: calc(100vw - 16px);
+    height: calc(100vh - 16px);
   }
 
-  .diagram-zoom-viewport {
-    padding: 12px;
+  .diagram-zoom-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .diagram-zoom-actions {
+    justify-content: flex-start;
   }
 }
