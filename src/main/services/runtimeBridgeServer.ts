@@ -7,6 +7,7 @@ import type {
   HostSnapshot,
   PlatformNavigationIntent,
   PlatformNavigationResult,
+  RuntimeBridgeDiscoveryDescriptor,
   RuntimeBridgeDescriptor,
 } from '../../shared/types';
 
@@ -14,7 +15,6 @@ interface RuntimeBridgeSession {
   token: string;
   appId: string;
   entryKey: string;
-  snapshot: HostSnapshot;
   expiresAt: number;
 }
 
@@ -50,11 +50,13 @@ function writeJson(response: ServerResponse, statusCode: number, payload: unknow
 export class RuntimeBridgeServer {
   private server?: Server;
   private endpoint?: string;
+  private discovery?: { token: string; expiresAt: number; publishedAt: number };
   private sessions = new Map<string, RuntimeBridgeSession>();
 
   constructor(
     private readonly invokeCapability: (input: CapabilityInvokeInput) => CapabilityInvokeResult | Promise<CapabilityInvokeResult>,
     private readonly openNavigationIntent: (input: PlatformNavigationIntent) => PlatformNavigationResult,
+    private readonly createSnapshot: (input: { appId: string; entryKey: string }) => HostSnapshot,
   ) {}
 
   async createDescriptor(input: { appId: string; entryKey: string; snapshot: HostSnapshot }): Promise<RuntimeBridgeDescriptor> {
@@ -65,7 +67,6 @@ export class RuntimeBridgeServer {
       token,
       appId: input.appId,
       entryKey: input.entryKey,
-      snapshot: input.snapshot,
       expiresAt,
     });
 
@@ -80,6 +81,35 @@ export class RuntimeBridgeServer {
     };
   }
 
+  async createDiscoveryDescriptor(input: {
+    hostKind: RuntimeBridgeDiscoveryDescriptor['hostKind'];
+    hostVersion: string;
+  }): Promise<RuntimeBridgeDiscoveryDescriptor> {
+    const endpoint = await this.ensureStarted();
+    const now = Date.now();
+    const expiresAt = now + 1000 * 60 * 60 * 24 * 7;
+    if (!this.discovery || this.discovery.expiresAt < now) {
+      this.discovery = {
+        token: randomUUID(),
+        publishedAt: now,
+        expiresAt,
+      };
+    } else {
+      this.discovery.expiresAt = expiresAt;
+    }
+
+    return {
+      protocol: 'lime.runtimeBridge.discovery',
+      version: 1,
+      endpoint,
+      token: this.discovery.token,
+      hostKind: input.hostKind,
+      hostVersion: input.hostVersion,
+      publishedAt: new Date(this.discovery.publishedAt).toISOString(),
+      expiresAt: new Date(this.discovery.expiresAt).toISOString(),
+    };
+  }
+
   revokeApp(appId: string): void {
     for (const [token, session] of this.sessions.entries()) {
       if (session.appId === appId) {
@@ -90,6 +120,7 @@ export class RuntimeBridgeServer {
 
   close(): void {
     this.sessions.clear();
+    this.discovery = undefined;
     this.server?.close();
     this.server = undefined;
     this.endpoint = undefined;
@@ -125,6 +156,11 @@ export class RuntimeBridgeServer {
         return;
       }
 
+      if (request.url === '/attach') {
+        await this.handleAttach(request, response);
+        return;
+      }
+
       const token = this.extractBearerToken(request);
       const session = token ? this.sessions.get(token) : undefined;
       if (!session || session.expiresAt < Date.now()) {
@@ -133,7 +169,7 @@ export class RuntimeBridgeServer {
       }
 
       if (request.url === '/snapshot') {
-        writeJson(response, 200, { ok: true, snapshot: session.snapshot });
+        writeJson(response, 200, { ok: true, snapshot: this.createSnapshot({ appId: session.appId, entryKey: session.entryKey }) });
         return;
       }
 
@@ -185,5 +221,28 @@ export class RuntimeBridgeServer {
     }
     const [type, token] = authorization.split(' ');
     return type === 'Bearer' ? token : undefined;
+  }
+
+  private async handleAttach(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const token = this.extractBearerToken(request);
+    if (!this.discovery || !token || token !== this.discovery.token || this.discovery.expiresAt < Date.now()) {
+      writeJson(response, 401, { ok: false, error: { code: 'discovery-unauthorized', message: 'runtime bridge discovery token 无效。' } });
+      return;
+    }
+
+    const body = (await readRequestBody(request)) as Partial<{ appId: string; entryKey: string }> | undefined;
+    const appId = typeof body?.appId === 'string' && body.appId.trim() ? body.appId.trim() : undefined;
+    if (!appId) {
+      writeJson(response, 400, { ok: false, error: { code: 'app-id-required', message: '缺少业务 App ID。' } });
+      return;
+    }
+
+    const entryKey = typeof body?.entryKey === 'string' && body.entryKey.trim() ? body.entryKey.trim() : 'default';
+    const descriptor = await this.createDescriptor({
+      appId,
+      entryKey,
+      snapshot: this.createSnapshot({ appId, entryKey }),
+    });
+    writeJson(response, 200, { ok: true, result: descriptor });
   }
 }

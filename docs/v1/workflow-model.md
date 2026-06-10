@@ -83,7 +83,7 @@ sequenceDiagram
 
 - 本地保存用户选择。
 - 云端只给默认值和品牌推荐。
-- API Key / OAuth 凭证只进入 Credential Broker，普通设置 JSON 只保存 `apiKeyConfigured`。
+- 模型 Provider API Key 只进入 App Server provider store；设置页输入的明文 key 只作为 `settings.saveModel` 瞬时字段转交 `modelProviderKey/create`，普通设置 JSON 只保存 `apiKeyConfigured`。
 - Product App 运行时只读 Host Snapshot / readiness 投影，不直接改平台全局配置，也不直接传 provider secret。
 - Agent Runtime 执行前由 Desktop Host 把有效配置解析成 `AgentRuntimeContext.modelProfile`，通过 App Server JSON-RPC 传给 RuntimeCore。
 

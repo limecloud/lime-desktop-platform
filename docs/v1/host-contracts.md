@@ -59,7 +59,25 @@ export interface HostProfile {
   capabilities: string[];
   locale: string;
   theme: 'light' | 'dark' | 'system';
+  appearance?: PlatformAppearanceSettings;
   workspacePath?: string;
+}
+
+export interface PlatformAppearanceSettings {
+  colorTheme:
+    | 'emerald'
+    | 'ocean'
+    | 'vintage'
+    | 'neon'
+    | 'lime'
+    | 'dusk'
+    | 'minimal'
+    | 'vibrant'
+    | 'nature'
+    | 'arts'
+    | 'luxury';
+  fontScale: number;
+  serifEnabled: boolean;
 }
 
 export type ReadinessState = 'ready' | 'needs-setup' | 'blocked' | 'disabled';
@@ -100,6 +118,7 @@ export interface HostSnapshot {
   entryKey: string;
   locale: string;
   theme: 'light' | 'dark' | 'system';
+  appearance?: PlatformAppearanceSettings;
   workspacePath?: string;
   modelSettingsVersion?: string;
   oauthState?: 'unauthenticated' | 'authenticated' | 'expired';
@@ -318,9 +337,61 @@ export interface ProductAppSettingsWriteInput<TValue = Record<string, unknown>> 
 - `scope: 'workspace'`：`.lime-desktop/product-settings/<appId>/<namespace>.json`
 - `scope: 'user'`：Electron `userData/state/product-settings/<appId>/<namespace>.json`
 
-Product App 独特设置不得保存 OAuth token、模型 API Key、billing 账本或平台权限权威状态；凭证、token、API Key 和 OAuth 类 namespace / key 会被宿主拒绝。密钥只允许 Credential Broker 保存。
+Product App 独特设置不得保存 OAuth token、模型 API Key、billing 账本或平台权限权威状态；凭证、token、API Key 和 OAuth 类 namespace / key 会被宿主拒绝。模型 Provider metadata 和 API Key 的 current 事实源是 App Server provider store；Desktop Credential Broker 仅作为旧 key 一次性迁移 source 和 fail-closed 诊断状态。
 
-### 7.5 Agent Runtime Capability
+### 7.5 Model Settings Capability
+
+业务 App 不直接读写模型 Provider key。平台宿主通过 `lime.modelSettings` capability 提供非敏感 projection、旧设置迁移入口和设置页导航。
+
+Runtime Bridge 路径：
+
+- `POST /snapshot`：返回 `HostSnapshot.modelSettingsVersion`，只用于业务 App 判断平台模型设置版本是否变化。
+- `POST /capability/invoke`，`capability: "lime.modelSettings"`：
+  - `operation: "model-settings/read"`：返回当前 App Server provider store 的非敏感 `ModelSettings` projection。
+  - `operation: "model-settings/save"`：保存平台模型设置；若 input 中包含 provider `apiKey`，该 key 只能作为瞬时字段转交 App Server `modelProviderKey/create(replaceExisting:true)`。
+  - `operation: "migrate"`：与 `model-settings/save` 等价，用于业务 App 启动期把旧本地模型设置一次性迁到平台/App Server。
+- `POST /intent/open`，`target: "model-settings"`：业务 App 无权复制设置 UI，只能请求宿主打开平台模型设置页。
+
+保存输入示例：
+
+```ts
+await platform.invokeCapability({
+  capability: 'lime.modelSettings',
+  operation: 'model-settings/save',
+  input: {
+    source: 'content-studio-local-migration',
+    settings: {
+      version: '0',
+      updatedAt: new Date().toISOString(),
+      defaultAgentProviderId: 'content-studio-text-openai',
+      defaultTextModelId: 'gpt-4.1-mini',
+      providers: [
+        {
+          id: 'content-studio-text-openai',
+          displayName: 'Content Studio 文字 openai-chat',
+          protocol: 'openai-compatible',
+          capabilityKinds: ['text'],
+          enabled: true,
+          authType: 'api-key',
+          baseUrl: 'https://api.openai.com/v1',
+          models: ['gpt-4.1-mini'],
+          apiKey: '短程输入，不能持久化到平台普通 JSON',
+        },
+      ],
+    },
+  },
+});
+```
+
+必须满足：
+
+- 返回给业务 App 的 `ModelSettings` 不包含 `apiKey`，只包含 `apiKeyConfigured` / readiness / provider/model projection。
+- 保存请求包含新 API Key 但 App Server provider store 不可用时，平台必须 fail-closed；不能把 key 写入 Desktop Credential Broker 或普通 JSON 再“稍后同步”。
+- 旧 Desktop Credential Broker 只作为升级迁移 source；迁移成功后删除旧 broker key 文件，并以 App Server sync record 的 `credentialSyncedAt` 作为后续 marker。
+- 业务 App 迁移旧设置后必须清除本地旧 key 字段；standalone/dev 模式只能作为过渡，不得成为 Agent Runtime key source。
+- `modelProviderKey/next` 会返回明文 key，只能留在 App Server/runtime 内部；Desktop Host 不在 Product App invoke 路径调用。
+
+### 7.6 Agent Runtime Capability
 
 Agent Runtime current 路线是 Lime App Server JSON-RPC / RuntimeCore。Claude SDK、Pi 和 MCP session tools 不作为 Product App 的公开依赖，也不再作为当前 platform backend 路线。业务 App 只能通过平台 capability 发起 agent runtime：
 
@@ -340,8 +411,8 @@ Agent Runtime current 路线是 Lime App Server JSON-RPC / RuntimeCore。Claude 
 - Desktop Host 调用 App Server JSON-RPC runtime 前，必须把设置中心解析成 `AgentRuntimeContext`。
 - `AgentRuntimeContext.modelProfile` 是 Desktop Host 对 RuntimeCore 暴露的唯一模型配置投影。
 - `agentSession/start` 必须只发送 App Server 当前 schema 接收的 session 字段；provider / model 选择同步投影为 `agentSession/turn/start.params.runtimeOptions.providerPreference` / `runtimeOptions.modelPreference`，其中 `providerPreference` 优先使用 App Server provider id。同一份非敏感上下文放入 `runtimeOptions.hostOptions.desktopPlatformRuntimeContext`。禁止把 `runtimeContext` 写到 App Server 当前不消费的 `agentSession/start.params.runtimeContext` 或 `runtimeOptions.runtimeContext` 假字段。
-- 密钥只能通过 `credentialRef` 表达，resolver 固定为 `desktop-host-credential-broker`。
-- 当前最小 Credential Broker 已接入，普通 `ModelSettings` JSON 只保留 `apiKeyConfigured`；runtime turn JSON-RPC payload、Host Snapshot、runtime event 和 Product App settings 不能包含明文 secret。`modelProviderKey/create` 属于设置同步控制面；`modelProviderKey/next` 会返回明文 key，Desktop Host 不在 Product App invoke 路径调用。OS keychain、OAuth token 轮换和生产级 credential injection 仍是后续项。
+- 密钥只能通过 `credentialRef` 表达，current live resolver 是 `app-server-provider-store`；`desktop-host-credential-broker` 只表示旧 key 迁移或未完成 App Server provisioning 的诊断状态。
+- 普通 `ModelSettings` JSON 只保留 `apiKeyConfigured`；runtime turn JSON-RPC payload、Host Snapshot、runtime event 和 Product App settings 不能包含明文 secret。`modelProviderKey/create` 属于设置同步控制面；`modelProviderKey/next` 会返回明文 key，Desktop Host 不在 Product App invoke 路径调用。OAuth token 轮换和生产级注入策略仍是后续项。
 
 当前请求契约：
 
@@ -350,7 +421,7 @@ export interface AgentRuntimeCredentialRef {
   kind: 'model-provider';
   providerId: string;
   authType: NonNullable<ModelProviderConfig['authType']>;
-  resolver: 'desktop-host-credential-broker';
+  resolver: 'app-server-provider-store' | 'desktop-host-credential-broker';
   configured: boolean;
 }
 
@@ -494,11 +565,11 @@ export interface AgentRuntimeEvent {
 - 本地存储必须能被重新扫描和重建。
 - 平台基础设置、业务 App 独特设置和业务 App 数据库必须分 namespace；业务 App 不能把平台基础设置复制成私有事实。
 - `product-settings` 只保存小型 JSON 设置，不承接列表、草稿、历史记录、artifact、客户数据或可迁移业务表。
-- `product-settings` 禁止保存 credential、secret、token、API Key 或 OAuth namespace / key；这些数据必须走 Credential Broker。
+- `product-settings` 禁止保存 credential、secret、token、API Key 或 OAuth namespace / key；模型 Provider key 必须走 App Server provider store，其他敏感凭证必须走平台宿主凭证边界。
 - `appId` 和 `namespace` 必须是稳定标识，不允许路径穿越或运行时生成的随机值。
 - `lime.storage` 当前提供 workspace scope JSON document 最小后端，支持 `read` / `write` / `list` / `delete`，不支持任意表查询、索引和 migration。
 - `lime.storage` 写事件只记录 namespace、documentId、scope 和 valueRedacted，不把业务 value 复制进 runtime event。
-- `lime.storage` 禁止保存 credential、secret、token、API Key 或 OAuth namespace；这些数据必须走 Credential Broker。
+- `lime.storage` 禁止保存 credential、secret、token、API Key 或 OAuth namespace；模型 Provider key 必须走 App Server provider store，其他敏感凭证必须走平台宿主凭证边界。
 - 桌面端后续默认升级为宿主管理的 per-app SQLite；普通用户不应为了运行桌面 Product App 额外安装 PostgreSQL。团队 / 云端共享数据再由 App Server / Cloud 使用 per-app schema、role 或 dedicated database。
 
 ## 9. 兼容性规则

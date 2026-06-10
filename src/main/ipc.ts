@@ -81,7 +81,7 @@ export function registerIpcHandlers(platformService: PlatformService): void {
     platformService.getRuntimeSnapshot(input),
   );
 
-  ipcMain.handle(LIME_DESKTOP_IPC.settingsGetModel, () => platformService.getModelSettings());
+  ipcMain.handle(LIME_DESKTOP_IPC.settingsGetModel, () => platformService.getModelSettingsFresh());
   ipcMain.handle(LIME_DESKTOP_IPC.settingsSaveModel, (_event, settings: ModelSettings) =>
     withPlatformChange(platformService, 'settings-updated', {}, () => platformService.saveModelSettings(settings)),
   );

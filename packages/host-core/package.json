@@ -1,6 +1,6 @@
 {
   "name": "@limecloud/desktop-platform-host-core",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Lime Desktop Platform 平台无关宿主核心契约。",
   "type": "module",
   "license": "Apache-2.0",
@@ -21,7 +21,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@limecloud/desktop-platform-contracts": "0.1.5"
+    "@limecloud/desktop-platform-contracts": "0.2.0"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

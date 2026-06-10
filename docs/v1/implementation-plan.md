@@ -160,7 +160,7 @@ samples/platform-conformance/
 - storage runtime event 不记录业务 value，凭证类 namespace 被阻断。
 - 后续 storage manifest 可验证，migration 可重放；失败时不破坏已有业务数据。
 - `product-settings` 仍只保存轻量设置，不承接草稿、历史记录、客户事实或业务表。
-- `product-settings` 阻断凭证、token、API Key 和 OAuth 类 namespace / key；这类数据只能走 Credential Broker。
+- `product-settings` 阻断凭证、token、API Key 和 OAuth 类 namespace / key；模型 Provider key 只能走 App Server provider store，其他敏感凭证必须走平台宿主凭证边界。
 
 ### P7: Tauri 兼容层
 

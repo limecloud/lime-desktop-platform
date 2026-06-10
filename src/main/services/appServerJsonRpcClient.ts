@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, normalize, relative, sep } from 'node:path';
+import { app as electronApp } from 'electron';
 import type {
   AgentRuntimeContext,
   AgentRuntimeEvent,
@@ -39,6 +40,7 @@ export interface AppServerSidecarLaunchConfig {
 
 export interface AppServerSidecarResolveOptions {
   resourcesPath?: string;
+  userDataPath?: string;
   platform?: NodeJS.Platform;
   arch?: string;
   exists?: (path: string) => boolean;
@@ -101,7 +103,10 @@ interface AppServerProviderValue {
   name: string;
   type: string;
   apiHost: string;
+  enabled: boolean;
   apiKeyCount?: number;
+  customModels: string[];
+  updatedAt?: string;
 }
 
 interface AppServerModelProviderListResult {
@@ -141,6 +146,11 @@ export interface AppServerModelProviderSyncResult {
   created: boolean;
   updated: boolean;
   credentialSynced: boolean;
+}
+
+export interface AppServerModelProviderProjection {
+  provider: ModelProviderConfig;
+  syncRecord: ModelProviderAppServerSyncRecord;
 }
 
 export class JsonRpcProtocolError extends Error {
@@ -188,7 +198,7 @@ export function resolveAppServerSidecarLaunchConfig(
 
   return createLaunchConfig({
     command,
-    args: parseShellLikeArgs(env.APP_SERVER_ARGS),
+    args: withDefaultDataDir(parseShellLikeArgs(env.APP_SERVER_ARGS), options),
     cwd: env.APP_SERVER_CWD?.trim() || undefined,
     env,
     source: 'env-bin',
@@ -387,6 +397,23 @@ export class AppServerJsonRpcClient {
     };
   }
 
+  async listModelProviders(input: { settingsVersion?: string } = {}): Promise<AppServerModelProviderProjection[]> {
+    await this.initialize({
+      clientInfo: {
+        name: 'lime-desktop-platform',
+        title: 'Lime Desktop Platform',
+        version: '0.1.4',
+      },
+    });
+
+    const listResult = await this.request<AppServerModelProviderListResult>('modelProvider/list');
+    return listResult.providers
+      .map((provider) => normalizeAppServerProviderValue(provider))
+      .filter((provider): provider is AppServerProviderValue => Boolean(provider))
+      .map((provider) => createDesktopModelProviderProjection(provider, input.settingsVersion))
+      .filter((projection): projection is AppServerModelProviderProjection => Boolean(projection));
+  }
+
   close(): void {
     this.transport.close();
   }
@@ -518,7 +545,64 @@ function normalizeAppServerProviderValue(value: unknown): AppServerProviderValue
     return undefined;
   }
   const apiKeyCount = readNumberField(provider, 'apiKeyCount') ?? readNumberField(provider, 'api_key_count');
-  return { id, name, type, apiHost, apiKeyCount };
+  const enabled = readBooleanField(provider, 'enabled') ?? true;
+  const customModels = readStringArrayField(provider, 'customModels') ?? readStringArrayField(provider, 'custom_models') ?? [];
+  const updatedAt = readStringField(provider, 'updatedAt') ?? readStringField(provider, 'updated_at');
+  return { id, name, type, apiHost, enabled, apiKeyCount, customModels, updatedAt };
+}
+
+function createDesktopModelProviderProjection(
+  provider: AppServerProviderValue,
+  settingsVersion: string | undefined,
+): AppServerModelProviderProjection | undefined {
+  const protocol = mapDesktopProtocol(provider.type);
+  if (!protocol) {
+    return undefined;
+  }
+  const authType = protocol === 'local' ? 'none' : 'api-key';
+  const apiKeyConfigured = authType === 'none' || Boolean(provider.apiKeyCount && provider.apiKeyCount > 0);
+  return {
+    provider: {
+      id: provider.id,
+      displayName: provider.name,
+      protocol,
+      capabilityKinds: ['text'],
+      enabled: provider.enabled,
+      apiKeyConfigured,
+      authType,
+      baseUrl: provider.apiHost,
+      useResponsesApi: provider.type === 'openai-response',
+      models: provider.customModels,
+    },
+    syncRecord: {
+      desktopProviderId: provider.id,
+      status: 'synced',
+      appServerProviderId: provider.id,
+      appServerProviderType: provider.type,
+      appServerProviderName: provider.name,
+      apiHost: provider.apiHost,
+      settingsVersion,
+      syncedAt: new Date().toISOString(),
+      credentialSyncedAt: apiKeyConfigured && authType === 'api-key' ? provider.updatedAt ?? new Date().toISOString() : undefined,
+      plaintextSecrets: false,
+    },
+  };
+}
+
+function mapDesktopProtocol(type: string): ModelProviderConfig['protocol'] | undefined {
+  if (type === 'anthropic' || type === 'anthropic-compatible') {
+    return 'anthropic-compatible';
+  }
+  if (type === 'gemini') {
+    return 'gemini-native';
+  }
+  if (type === 'ollama') {
+    return 'local';
+  }
+  if (type === 'openai' || type === 'openai-response') {
+    return 'openai-compatible';
+  }
+  return undefined;
 }
 
 function normalizeProviderHost(value: string): string {
@@ -533,6 +617,19 @@ function readStringField(record: Record<string, unknown>, key: string): string |
 function readNumberField(record: Record<string, unknown>, key: string): number | undefined {
   const value = record[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function readBooleanField(record: Record<string, unknown>, key: string): boolean | undefined {
+  const value = record[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function readStringArrayField(record: Record<string, unknown>, key: string): string[] | undefined {
+  const value = record[key];
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return value.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()));
 }
 
 function parseShellLikeArgs(value: string | undefined): string[] {
@@ -607,7 +704,7 @@ function resolvePackagedAppServerSidecarLaunchConfig(
 
   return createLaunchConfig({
     command,
-    args: [...binary.args, ...parseShellLikeArgs(env.APP_SERVER_ARGS)],
+    args: withDefaultDataDir([...binary.args, ...parseShellLikeArgs(env.APP_SERVER_ARGS)], options),
     cwd: env.APP_SERVER_CWD?.trim() || undefined,
     env,
     source: 'packaged-resource',
@@ -699,6 +796,37 @@ function normalizeBackendMode(value: string | undefined): string {
     return normalized;
   }
   return 'runtime';
+}
+
+function withDefaultDataDir(args: string[], options: AppServerSidecarResolveOptions): string[] {
+  if (argsDeclareDataDir(args)) {
+    return args;
+  }
+
+  const dataDir = resolveDefaultAppServerDataDir(options);
+  return dataDir ? [...args, '--data-dir', dataDir] : args;
+}
+
+function argsDeclareDataDir(args: string[]): boolean {
+  return args.some((arg) => arg === '--data-dir' || arg.startsWith('--data-dir='));
+}
+
+function resolveDefaultAppServerDataDir(options: AppServerSidecarResolveOptions): string | undefined {
+  const userDataPath = options.userDataPath?.trim() || resolveElectronUserDataPath();
+  return userDataPath ? join(userDataPath, APP_SERVER_RESOURCE_DIR_NAME) : undefined;
+}
+
+function resolveElectronUserDataPath(): string | undefined {
+  try {
+    if (typeof electronApp?.getPath !== 'function') {
+      return undefined;
+    }
+
+    const userDataPath = electronApp.getPath('userData');
+    return typeof userDataPath === 'string' && userDataPath.trim() ? userDataPath.trim() : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

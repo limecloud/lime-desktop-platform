@@ -25,6 +25,7 @@ test('PlatformStore 按 appId + namespace + scope 隔离业务 App 独特设置'
   const root = createTempRoot();
   try {
     const store = await createStore(root);
+    assert.equal(existsSync(store.getCredentialBrokerDir()), false);
     const workspaceRecord = store.writeProductAppSettings({
       appId: 'product.app',
       namespace: 'profile',
@@ -68,7 +69,7 @@ test('PlatformStore 按 appId + namespace + scope 隔离业务 App 独特设置'
           namespace: 'token-vault',
           value: { label: '不能把凭证塞进业务设置 namespace' },
         }),
-      /Credential Broker/,
+      /平台凭证边界/,
     );
     assert.throws(
       () =>
@@ -77,8 +78,61 @@ test('PlatformStore 按 appId + namespace + scope 隔离业务 App 独特设置'
           namespace: 'profile',
           value: { provider: { apiKey: 'sk-should-not-persist' } },
         }),
-      /Credential Broker/,
+      /平台凭证边界/,
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('PlatformStore 读取旧平台设置时补齐 appearance 默认值', async () => {
+  const root = createTempRoot();
+  try {
+    configureElectronMock({
+      userData: join(root, 'userData'),
+      appPath: process.cwd(),
+      version: '0.1.4-test',
+    });
+    const userStateDir = join(root, 'userData', 'state');
+    const { mkdirSync, writeFileSync } = await import('node:fs');
+    mkdirSync(userStateDir, { recursive: true });
+    writeFileSync(
+      join(userStateDir, 'platform-settings.json'),
+      JSON.stringify({
+        version: '7',
+        updatedAt: '2026-06-09T00:00:00.000Z',
+        locale: 'zh-CN',
+        theme: 'dark',
+        workspacePath: join(root, 'workspace'),
+        proxy: { enabled: false, url: '' },
+        developerMode: true,
+      }),
+      'utf8',
+    );
+    const { PlatformStore } = await import('../../src/main/services/platformStore');
+    const store = new PlatformStore();
+    const settings = store.readPlatformSettings();
+
+    assert.deepEqual(settings.appearance, {
+      colorTheme: 'emerald',
+      fontScale: 1,
+      serifEnabled: false,
+    });
+    assert.equal(settings.general.notificationsEnabled, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('PlatformStore 新工作区默认不注入固定模型 Provider', async () => {
+  const root = createTempRoot();
+  try {
+    const store = await createStore(root);
+    const settings = store.readModelSettings();
+
+    assert.deepEqual(settings.providers, []);
+    assert.equal(settings.defaultAgentProviderId, undefined);
+    assert.equal(settings.defaultTextModelId, undefined);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -131,7 +185,7 @@ test('PlatformStore 用 workspace document 托管 lime.storage，并阻断凭证
           documentId: 'provider',
           value: { apiKey: 'sk-should-not-persist' },
         }),
-      /Credential Broker/,
+      /平台凭证边界/,
     );
     assert.throws(
       () =>

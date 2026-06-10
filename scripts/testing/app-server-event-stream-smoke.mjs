@@ -191,7 +191,7 @@ function createRuntimeContext() {
     credentialPolicy: {
       handoff: 'credential-ref-only',
       plaintextSecrets: false,
-      resolver: 'desktop-host-credential-broker',
+      resolver: 'app-server-provider-store',
       runtimeStatus: 'not-required',
       productionInjectionReady: true,
     },

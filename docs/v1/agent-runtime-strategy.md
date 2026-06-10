@@ -103,10 +103,12 @@ flowchart TB
 
 1. Product App 只发起 `lime.agent` capability 请求，可携带任务、附件、`modelPolicy.preferredModelId`、`runtimeOptions.modelId` 和 `permissionMode`。
 2. Desktop Host 从平台设置中心读取当前 `ModelSettings`，解析 enabled provider、目标 model、capability 和权限模式。
-3. Desktop Host 在 `settings.saveModel` 保存路径做受控 provisioning：把非敏感 provider metadata 写入 App Server `modelProvider/list/read/create/update`，并且只在这个设置同步边界从 Credential Broker 解析短程 API Key 后调用 `modelProviderKey/create`。App Server 返回的真实 provider id 会保存为非敏感 `desktopProviderId -> appServerProviderId` 映射。
-4. Desktop Host 生成非敏感 `AgentRuntimeContext`，其中 `modelProfile` 是给 App Server JSON-RPC / RuntimeCore 的唯一模型投影。`credentialRef.providerId` 仍指向宿主 Credential Broker 的 desktop provider id；`provider.appServerProviderId` 表示 App Server provider store 中的真实 id。
+3. Desktop Host 在 `settings.saveModel` 保存路径做受控 provisioning：把非敏感 provider metadata 写入 App Server `modelProvider/list/read/create/update`，并把设置页输入的临时 API Key 只转交 `modelProviderKey/create`。旧 Desktop Credential Broker 仅作为缺少 `credentialSyncedAt` marker 时的一次性迁移 source，不再承接新 key 写入。App Server 返回的真实 provider id 会保存为非敏感 `desktopProviderId -> appServerProviderId` 映射。
+4. Desktop Host 生成非敏感 `AgentRuntimeContext`，其中 `modelProfile` 是给 App Server JSON-RPC / RuntimeCore 的唯一模型投影。`credentialRef.providerId` 指向 provider projection id；`provider.appServerProviderId` 表示 App Server provider store 中的真实 id。
 5. `AppServerJsonRpcClient.startAgentRun(...)` 必须按 App Server current schema 发送 `agentSession/start`，再在 `agentSession/turn/start.params.runtimeOptions` 写入 `providerPreference` / `modelPreference`；`providerPreference` 优先使用已同步的 App Server provider id。同一份非敏感上下文只进入 `runtimeOptions.hostOptions.desktopPlatformRuntimeContext`，不写入 App Server 当前不消费的 `agentSession/start.params.runtimeContext` 或 `runtimeOptions.runtimeContext` 假字段。
 6. App Server / RuntimeCore 只消费这些 JSON-RPC 参数和 App Server provider store，不反向读取平台 JSON，也不接受 Product App 私传 provider key。`modelProviderKey/create` 是设置同步控制面，不是 runtime turn payload；`modelProviderKey/next` 会返回明文 key，Desktop Host 不在 Product App invoke 或 runtime handoff 路径调用它。
+
+App Server provider projection 只能投影 App Server 明确返回的 `customModels` / `custom_models`。Desktop Host 不得按 provider type 合成 `gpt-*`、`claude-*`、`gemini-*` 或本地默认模型；没有显式模型 ID 的 provider 即使已经同步 key，也必须保持 `needs-setup`，不能进入 live Agent Runtime。
 
 `ModelProviderConfig` 必须覆盖：
 
@@ -121,7 +123,7 @@ flowchart TB
 - `useResponsesApi`
 - `models`
 
-普通 JSON 设置只保存 `apiKeyConfigured` 状态，不保存明文 API Key。真实 key、OAuth token 和 refresh token 只能进入 Credential Broker，不能进入 `ModelSettings`、Product App 设置、Host Snapshot、runtime event 或 JSON-RPC payload。
+普通 JSON 设置只保存 `apiKeyConfigured` 状态，不保存明文 API Key。模型 Provider key 只能进入 App Server provider store；OAuth token 和 refresh token 必须走平台宿主凭证边界，不能进入 `ModelSettings`、Product App 设置、Host Snapshot、runtime event 或 JSON-RPC payload。
 
 `AgentRuntimeModelProfile` 只允许包含非敏感字段：
 
@@ -147,11 +149,11 @@ flowchart TB
 - `permissionMode`
 - `credentialPolicy.handoff: 'credential-ref-only'`
 - `credentialPolicy.plaintextSecrets: false`
-- `credentialPolicy.resolver: 'desktop-host-credential-broker'`
+- `credentialPolicy.resolver: 'app-server-provider-store' | 'desktop-host-credential-broker'`
 - `credentialPolicy.runtimeStatus`
 - `credentialPolicy.productionInjectionReady`
 
-`credentialRef` 只表示“凭证已由宿主配置并可由 broker 解析”，例如 kind、provider id、authType、resolver、configured、storage kind、keychain-backed 状态、rotation 状态和 runtime status；resolver 固定为 `desktop-host-credential-broker`。它不是 API Key、OAuth token 或 refresh token。当前最小 Credential Broker 已接入，`settings.saveModel` 输入中的临时 `apiKey` 会写入 broker 并从普通 `ModelSettings` 持久化 JSON 中剔除；保存设置后 Desktop Host 会尝试把 provider/key 同步到 App Server provider store，成功后 diagnostics / runtimeContext 暴露 `runtimeStatus: 'app-server-provider-ready'`、`appServerProviderId` 和非敏感 sync 状态。`broker-reference-only` 表示 broker 已有凭证但尚未完成 App Server provider/key provisioning 或 host resolver 注入，live provider 会 fail-closed。OAuth provider、OS keychain、OAuth token 轮换和生产级注入策略仍未完成。
+`credentialRef` 只表示“凭证已由宿主配置并可由 App Server provider store 解析”，例如 kind、provider id、authType、resolver、configured、storage kind、keychain-backed 状态、rotation 状态和 runtime status；current live resolver 是 `app-server-provider-store`。它不是 API Key、OAuth token 或 refresh token。`settings.saveModel` 输入中的临时 `apiKey` 只作为瞬时字段转交 App Server `modelProviderKey/create`，并从普通 `ModelSettings` 持久化 JSON 中剔除；保存设置后 Desktop Host 会用 provider/key sync record 暴露 `runtimeStatus: 'app-server-provider-ready'`、`appServerProviderId` 和非敏感 sync 状态。`broker-reference-only` 表示旧 Credential Broker 有凭证但尚未完成 App Server provider/key provisioning，live provider 会 fail-closed；完成一次迁移并写入 `credentialSyncedAt` 后不得重复读取旧 key。OAuth provider、OAuth token 轮换和生产级注入策略仍未完成。
 
 App Server Runtime readiness 至少检查：
 
@@ -159,7 +161,7 @@ App Server Runtime readiness 至少检查：
 - 是否有 text capability。
 - 是否有可用 model。
 - `authType !== 'none'` 时是否已有凭证配置状态。
-- `authType !== 'none'` 时 credential resolver / App Server provider store 是否达到生产级注入状态；`runtimeStatus: 'app-server-provider-ready'` 或 `runtimeStatus: 'resolver-ready'` 才能把 live provider 判为 ready。
+- `authType !== 'none'` 时 App Server provider store 是否达到生产级注入状态；只有 `runtimeStatus: 'app-server-provider-ready'` 才能把 live provider 判为 ready，旧 `resolver-ready` 仅作为兼容诊断态。
 - App Server client 是否已连接。
 
 ## 5. Product App 设置边界
@@ -241,7 +243,7 @@ App Server client 不可用、未配置 `APP_SERVER_BIN` 或初始化失败时�
 
 - 设置中心支持 provider 名称、Base URL、API 格式、Responses API、API Key 配置状态和模型优先级。
 - `settings.saveModel` 持久化 `ModelSettings`。
-- 最小 Credential Broker 保存 API Key / OAuth 凭证，普通 `ModelSettings` JSON 只保留 `apiKeyConfigured`。
+- App Server provider store 保存模型 API Key；旧 Credential Broker 仅作为一次性迁移 source，普通 `ModelSettings` JSON 只保留 `apiKeyConfigured`。
 - OS keychain、OAuth token 轮换、过期刷新和生产级 credential injection 仍未完成。
 
 ### P3: Product App 设置托管
@@ -249,7 +251,7 @@ App Server client 不可用、未配置 `APP_SERVER_BIN` 或初始化失败时�
 - contracts / shared types 暴露 `ProductAppSettingsRecord`。
 - IPC / preload / host-core 暴露 read/write。
 - Store 按 `appId + namespace + scope` 独立落盘。
-- Store 阻断凭证、token、API Key 和 OAuth 类 namespace / key；真实凭证只能走 Credential Broker。
+- Store 阻断凭证、token、API Key 和 OAuth 类 namespace / key；模型 Provider key 只能走 App Server provider store，其他敏感凭证必须走平台宿主凭证边界。
 - React 设置弹窗支持业务设置扩展分组。
 
 ### P4: App Server Client

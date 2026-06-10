@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { ModelProviderCredentialState, ModelProviderConfig } from '../../shared/types';
 
@@ -108,6 +108,15 @@ export class CredentialBroker {
       decipher.update(Buffer.from(record.ciphertext, 'base64')),
       decipher.final(),
     ]).toString('utf8');
+  }
+
+  deleteModelProviderCredential(providerId: string): boolean {
+    const credentialPath = this.getCredentialPath(providerId);
+    if (!existsSync(credentialPath)) {
+      return false;
+    }
+    rmSync(credentialPath, { force: true });
+    return true;
   }
 
   private readOrCreateKey(): Buffer {

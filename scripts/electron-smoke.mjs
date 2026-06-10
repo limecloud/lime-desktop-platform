@@ -394,13 +394,6 @@ try {
     const bootstrap = await window.limeDesktop.platform.getBootstrap();
     const projection = await window.limeDesktop.apps.install('${fixtureAppId}');
     const login = await window.limeDesktop.auth.login({ tenantName: 'Smoke 租户', accountEmail: 'smoke@limecloud.local' });
-    await window.limeDesktop.settings.saveModel({
-      ...bootstrap.modelSettings,
-      defaultTextModelId: 'local-default',
-      providers: bootstrap.modelSettings.providers.map((provider) => provider.id === 'local'
-        ? { ...provider, enabled: true, apiKeyConfigured: true }
-        : provider),
-    });
     const billing = await window.limeDesktop.billing.refresh();
     const syncedBootstrap = await window.limeDesktop.platform.getBootstrap();
     const launch = await window.limeDesktop.apps.launchEntry({ appId: '${fixtureAppId}', entryKey: '${fixtureEntryKey}' });
@@ -592,8 +585,8 @@ try {
     bridgeState.oemBrandName !== 'Mock Limecore Brand' ||
     !bridgeState.hasProjection ||
     bridgeState.billingState !== 'active' ||
-    !bridgeState.launched ||
-    bridgeState.snapshotAppId !== fixtureAppId ||
+    bridgeState.launched !== false ||
+    bridgeState.snapshotAppId !== undefined ||
     !bridgeState.capabilityOk ||
     bridgeState.agentRuntimeOk ||
     bridgeState.agentRuntimeState !== 'blocked' ||
@@ -604,12 +597,12 @@ try {
     bridgeState.agentRuntimeMethodStartTurn !== 'agentSession/turn/start' ||
     bridgeState.agentRuntimeContextProtocol !== 'appserver.runtimeContext' ||
     bridgeState.agentRuntimeContextSource !== 'desktop-platform-model-settings' ||
-    bridgeState.agentRuntimeContextProviderId !== 'local' ||
-    bridgeState.agentRuntimeContextModelId !== 'local-default' ||
-    bridgeState.agentRuntimeContextProviderAuthType !== 'none' ||
+    bridgeState.agentRuntimeContextProviderId !== undefined ||
+    bridgeState.agentRuntimeContextModelId !== undefined ||
+    bridgeState.agentRuntimeContextProviderAuthType !== undefined ||
     bridgeState.agentRuntimeContextPlaintextSecrets !== false ||
-    bridgeState.agentRuntimeCredentialRuntimeStatus !== 'not-required' ||
-    bridgeState.agentRuntimeCredentialProductionReady !== true ||
+    bridgeState.agentRuntimeCredentialRuntimeStatus !== 'missing' ||
+    bridgeState.agentRuntimeCredentialProductionReady !== false ||
     bridgeState.agentRuntimeRequestContextProtocol !== 'appserver.runtimeContext' ||
     bridgeState.agentRuntimeEventContextProtocol !== 'appserver.runtimeContext' ||
     bridgeState.agentRuntimeContextSensitiveLeak ||

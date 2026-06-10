@@ -1,6 +1,18 @@
 export type HostKind = 'electron' | 'tauri';
 export type SourceKind = 'cloud' | 'local' | 'oem';
 export type ThemeMode = 'light' | 'dark' | 'system';
+export type PlatformColorTheme =
+  | 'emerald'
+  | 'ocean'
+  | 'vintage'
+  | 'neon'
+  | 'lime'
+  | 'dusk'
+  | 'minimal'
+  | 'vibrant'
+  | 'nature'
+  | 'arts'
+  | 'luxury';
 export type ReadinessState = 'ready' | 'needs-setup' | 'blocked' | 'disabled';
 export type BillingState = 'unknown' | 'active' | 'needs-payment' | 'suspended';
 export type OAuthState = 'unauthenticated' | 'authenticated' | 'expired';
@@ -34,6 +46,7 @@ export type PlatformCapability =
   | 'lime.branding'
   | 'lime.billing'
   | 'lime.appUpdates'
+  | 'lime.settings'
   | 'lime.download'
   | 'lime.permissions'
   | 'lime.diagnostics'
@@ -87,6 +100,7 @@ export interface HostProfile {
   capabilities: PlatformCapability[];
   locale: string;
   theme: ThemeMode;
+  appearance?: PlatformAppearanceSettings;
   workspacePath?: string;
 }
 
@@ -129,8 +143,10 @@ export interface HostSnapshot {
   entryKey: string;
   locale: string;
   theme: ThemeMode;
+  appearance?: PlatformAppearanceSettings;
   workspacePath?: string;
   modelSettingsVersion?: string;
+  modelSettings?: ModelSettingsSnapshot;
   oauthState?: OAuthState;
   tenantName?: string;
   accountEmail?: string;
@@ -145,6 +161,17 @@ export interface RuntimeBridgeDescriptor {
   token: string;
   appId: string;
   entryKey: string;
+  expiresAt: string;
+}
+
+export interface RuntimeBridgeDiscoveryDescriptor {
+  protocol: 'lime.runtimeBridge.discovery';
+  version: 1;
+  endpoint: string;
+  token: string;
+  hostKind: HostKind;
+  hostVersion: string;
+  publishedAt: string;
   expiresAt: string;
 }
 
@@ -214,7 +241,7 @@ export interface ModelProviderConfig {
   enabled: boolean;
   apiKeyConfigured: boolean;
   /**
-   * 只允许作为 settings.saveModel 的临时输入，由 Desktop Host 写入 Credential Broker。
+   * 只允许作为 settings.saveModel 的临时输入，由 Desktop Host 转交 App Server provider key 控制面。
    * 宿主持久化 ModelSettings、Host Snapshot、runtimeContext 和 Product App projection 时必须剔除。
    */
   apiKey?: string;
@@ -234,7 +261,33 @@ export interface ModelSettings {
   providers: ModelProviderConfig[];
 }
 
-export type ModelProviderCredentialStorageKind = 'none' | 'local-encrypted-file';
+export interface ModelProviderSnapshot {
+  id: string;
+  displayName: string;
+  protocol: ModelProtocol;
+  capabilityKinds: ModelCapabilityKind[];
+  enabled: boolean;
+  apiKeyConfigured: boolean;
+  authType?: ModelProviderConfig['authType'];
+  baseUrl?: string;
+  useResponsesApi?: boolean;
+  models: string[];
+}
+
+export interface ModelSettingsSnapshot {
+  version: string;
+  updatedAt?: string;
+  defaultAgentProviderId?: string;
+  defaultTextModelId?: string;
+  defaultImageModelId?: string;
+  defaultVideoModelId?: string;
+  /**
+   * 面向 Product App 的非敏感 Provider metadata。不得包含 apiKey、token、secret 或 credential payload。
+   */
+  providers: ModelProviderSnapshot[];
+}
+
+export type ModelProviderCredentialStorageKind = 'none' | 'local-encrypted-file' | 'app-server-provider-store';
 export type ModelProviderCredentialRuntimeStatus =
   | 'not-required'
   | 'missing'
@@ -311,17 +364,35 @@ export interface OEMProjection {
   source?: ControlPlaneProjectionSource;
 }
 
+export interface PlatformAppearanceSettings {
+  colorTheme: PlatformColorTheme;
+  fontScale: number;
+  serifEnabled: boolean;
+}
+
 export interface PlatformSettings {
   version: string;
   updatedAt: string;
   locale: string;
   theme: ThemeMode;
+  appearance: PlatformAppearanceSettings;
   workspacePath: string;
   proxy: {
     enabled: boolean;
     url: string;
   };
   developerMode: boolean;
+  general: {
+    notificationsEnabled: boolean;
+    reduceMotion: boolean;
+    syncLocalAgentHistory: boolean;
+    quickWindowShortcutEnabled: boolean;
+    commandWhitelistEnabled: boolean;
+    permissionMode: 'auto-approve' | 'safe';
+    thinkingMode: 'auto' | 'off' | 'low' | 'medium' | 'high' | 'max';
+    showToolCalls: boolean;
+    expandToolCallsByDefault: boolean;
+  };
 }
 
 export type ProductAppSettingsScope = 'user' | 'workspace';
@@ -526,7 +597,11 @@ export interface AgentRuntimeCredentialRef {
   kind: 'model-provider';
   providerId: string;
   authType: NonNullable<ModelProviderConfig['authType']>;
-  resolver: 'desktop-host-credential-broker';
+  /**
+   * current live resolver 是 App Server provider store。
+   * desktop-host-credential-broker 仅用于旧 key 迁移或未完成 App Server provisioning 的 fail-closed 诊断。
+   */
+  resolver: 'desktop-host-credential-broker' | 'app-server-provider-store';
   configured: boolean;
   storageKind: ModelProviderCredentialStorageKind;
   keychainBacked: boolean;
@@ -566,7 +641,11 @@ export interface AgentRuntimeContext {
   credentialPolicy: {
     handoff: 'credential-ref-only';
     plaintextSecrets: false;
-    resolver: 'desktop-host-credential-broker';
+    /**
+     * current live resolver 是 App Server provider store。
+     * desktop-host-credential-broker 仅用于旧 key 迁移或未完成 App Server provisioning 的 fail-closed 诊断。
+     */
+    resolver: 'desktop-host-credential-broker' | 'app-server-provider-store';
     runtimeStatus: ModelProviderCredentialRuntimeStatus;
     productionInjectionReady: boolean;
   };

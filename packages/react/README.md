@@ -48,15 +48,17 @@ function PlatformPage(props: {
 
 左下角账号入口、通用设置、模型设置和账号设置同样由本包提供。Product App 只传入 Host Snapshot / bootstrap 的非敏感账号投影、模型设置投影与平台 intent handler，不在业务仓库复制设置 UI。
 
-主题页由本包完整承载：外观模式、颜色主题、对话字体大小和衬线体开关先维护 UI 草稿状态，真实保存后续接入宿主 host-core settings action handler。
+`PlatformAccountEntry` 和 `PlatformSettingsDialog` 是跨业务 App 的标准设置入口 / 设置中间件。宿主如果要与自身视觉统一，必须通过 `theme?: PlatformSettingsThemeTokens`、`className` 和宿主 CSS token 接入，不要复制 `.lime-settings-*` DOM 或 fork 公共设置组件。平台包默认继承宿主 `font-family`，并暴露 `--lime-platform-*` 变量用于颜色、圆角、阴影和边框适配；未传 token 时使用平台默认轻量桌面风格。
 
-模型设置页由本包完整承载：左侧展示启用模型列表，右侧展示当前 provider 配置卡；点击“添加模型”会切换到独立供应商选择视图，覆盖推荐服务、国内服务、聚合平台、海外平台和本地模型。配置卡支持 Provider 名称、Base URL、API 格式、认证方式、Responses API、API Key 配置状态和模型优先级。provider 图标只用于识别，不决定运行时后端。真实 provider 和默认模型保存必须由宿主 `settings.saveModel` action handler 接入；API Key 明文只进入 Credential Broker，不能落到 Product App。
+主题页由本包完整承载：外观模式、颜色主题、对话字体大小和衬线体开关通过 `onPreviewPlatformSettings` 立即投影到当前窗口，通过 `onSavePlatformSettings` 交给宿主持久化并刷新 Host Snapshot。Product App 只能消费 `theme` / `appearance` 投影，不再保存第二套基础外观设置。
+
+模型设置页由本包完整承载：左侧展示已配置 Provider 列表，右侧展示当前 provider 配置卡；点击“添加模型”会创建一个空白自定义 Provider，不内置推荐服务、国内服务、聚合平台、海外平台或本地模型等固定品牌目录，也不自动写入 `default-model`。配置卡支持 Provider 名称、Base URL、API 格式、认证方式、Responses API、API Key 配置状态和模型优先级；保存前必须显式填写至少一个模型 ID。provider 图标只用于识别，不决定运行时后端。真实 provider 和默认模型保存必须由宿主 `settings.saveModel` action handler 接入；API Key 明文只作为瞬时输入交给宿主转发 App Server `modelProviderKey/create`，不能落到 Product App、React 包状态或普通 JSON。
 
 业务 App 独特设置由本包通过 `ProductSettingsExtension` 开放：平台设置弹窗会在“业务设置”分组里渲染 extension，并把 `settings` / `onSaveSettings` 上下文交给业务 UI。extension 只能保存自身 namespace 下的业务偏好，不能复制平台基础设置。
 
 语音模型页由本包完整承载：包含语音输入快捷键、Fn / 自定义快捷键切换、启用开关、SenseVoice Small 本地模型、安装状态、删除 / 安装模型、音频 / 视频 / 实时录音测试入口和所有转录历史。当前组件只维护 UI 草稿状态，真实快捷键注册、模型下载 / 删除、文件选择、录音权限、SenseVoice / FunASR 转写和历史持久化必须由宿主 host-core ASR action handler 接入，不能落到 Product App。
 
-搜索服务页由本包完整承载：按“已启用（拖拽排序优先级）”和“可用服务”分区展示 Tavily、Bing Search、秘塔搜索、Exa、Brave Search、SerpAPI、Serper、Google CSE 和 Firecrawl；启用卡片内直接提供 API Key 输入、获取 Key 入口，Google CSE 额外提供 `Custom Search Engine ID (cx)` 输入。当前组件只维护 UI 草稿状态，真实 API Key 加密保存、provider 健康检查、WebSearch 路由和失败回退必须由宿主 host-core search action handler / Credential Broker 接入，不能落到 Product App。
+搜索服务页由本包完整承载：按“已启用（拖拽排序优先级）”和“可用服务”分区展示 Tavily、Bing Search、秘塔搜索、Exa、Brave Search、SerpAPI、Serper、Google CSE 和 Firecrawl；启用卡片内直接提供 API Key 输入、获取 Key 入口，Google CSE 额外提供 `Custom Search Engine ID (cx)` 输入。当前组件只维护 UI 草稿状态，真实 API Key 加密保存、provider 健康检查、WebSearch 路由和失败回退必须由宿主 host-core search action handler 或 App Server provider/key 控制面接入，不能落到 Product App。
 
 网络页由本包完整承载：包含系统代理检测提示、代理服务器开关、协议 / 地址 / 端口输入、代理认证、代理白名单、模型供应商自动白名单展开项和代理地址预览。当前组件只维护 UI 草稿状态，真实系统代理检测、代理配置保存、`HTTP_PROXY` / `HTTPS_PROXY` 环境变量注入和 AI 子进程网络隔离必须由宿主 host-core settings / network action handler 接入，Product App 不能保存代理配置或覆盖系统代理。
 

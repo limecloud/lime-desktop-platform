@@ -85,15 +85,14 @@ function createDefaultCredentialState(provider: ModelProviderConfig): ModelProvi
     };
   }
 
-  const configured = Boolean(provider.apiKeyConfigured);
   return {
     providerId: provider.id,
     authType,
-    configured,
-    storageKind: configured ? 'local-encrypted-file' : 'none',
+    configured: false,
+    storageKind: 'none',
     keychainBacked: false,
     rotationRequired: false,
-    runtimeStatus: configured ? 'broker-reference-only' : 'missing',
+    runtimeStatus: 'missing',
     plaintextSecrets: false,
   };
 }
@@ -111,7 +110,11 @@ function findUsableAgentProvider(
   preferredModelId?: string,
 ): ModelSettings['providers'][number] | undefined {
   const enabledProviders = settings.providers.filter(
-    (provider) => provider.enabled && hasConfiguredCredential(provider, readCredentialState) && provider.capabilityKinds.includes('text'),
+    (provider) =>
+      provider.enabled &&
+      hasConfiguredCredential(provider, readCredentialState) &&
+      provider.capabilityKinds.includes('text') &&
+      provider.models.length > 0,
   );
   const defaultProvider = enabledProviders.find((provider) => provider.id === settings.defaultAgentProviderId);
   if (preferredModelId) {
@@ -160,7 +163,7 @@ function resolveRuntimeModelProfile(
               kind: 'model-provider',
               providerId: provider.id,
               authType,
-              resolver: 'desktop-host-credential-broker',
+              resolver: resolverFromCredentialState(credentialState),
               configured: credentialState.configured,
               storageKind: credentialState.storageKind,
               keychainBacked: credentialState.keychainBacked,
@@ -168,9 +171,7 @@ function resolveRuntimeModelProfile(
               ...(credentialState.expiresAt ? { expiresAt: credentialState.expiresAt } : {}),
               rotationRequired: credentialState.rotationRequired,
               runtimeStatus: credentialState.runtimeStatus,
-              productionInjectionReady:
-                credentialState.runtimeStatus === 'resolver-ready' ||
-                credentialState.runtimeStatus === 'app-server-provider-ready',
+              productionInjectionReady: credentialState.runtimeStatus === 'app-server-provider-ready',
             },
     },
     modelId,
@@ -183,13 +184,18 @@ function runtimeStatusFromModelProfile(modelProfile: AgentRuntimeModelProfile | 
   return modelProfile?.provider.credentialRef?.runtimeStatus ?? (modelProfile ? 'not-required' : 'missing');
 }
 
+function resolverFromCredentialState(
+  state: ModelProviderCredentialState,
+): AgentRuntimeContext['credentialPolicy']['resolver'] {
+  return state.storageKind === 'app-server-provider-store' ? 'app-server-provider-store' : 'desktop-host-credential-broker';
+}
+
 function credentialReadinessReason(
   state: ModelProviderCredentialState | undefined,
 ): ReadinessReason | undefined {
   if (
     !state ||
     state.runtimeStatus === 'not-required' ||
-    state.runtimeStatus === 'resolver-ready' ||
     state.runtimeStatus === 'app-server-provider-ready'
   ) {
     return undefined;
@@ -201,11 +207,11 @@ function credentialReadinessReason(
       fixable: true,
     };
   }
-  if (state.runtimeStatus === 'broker-reference-only') {
+  if (state.runtimeStatus === 'broker-reference-only' || state.runtimeStatus === 'resolver-ready') {
     return {
       code: 'host-credential-resolver-required',
       message:
-        '当前 Credential Broker 已有 provider 凭证，但尚未完成 App Server provider/key provisioning 或 host credential resolver 注入；不能把明文密钥放入 runtime turn JSON-RPC payload。',
+        '当前旧凭证状态尚未完成 App Server provider/key provisioning；不能把明文密钥放入 runtime turn JSON-RPC payload。',
       fixable: false,
     };
   }
@@ -219,6 +225,7 @@ function createRuntimeContext(
 ): AgentRuntimeContext {
   const modelProfile = resolveRuntimeModelProfile(settings, request, readCredentialState);
   const credentialRuntimeStatus = runtimeStatusFromModelProfile(modelProfile);
+  const credentialResolver = modelProfile?.provider.credentialRef?.resolver ?? 'app-server-provider-store';
   return {
     protocol: 'appserver.runtimeContext',
     version: 1,
@@ -228,11 +235,10 @@ function createRuntimeContext(
     credentialPolicy: {
       handoff: 'credential-ref-only',
       plaintextSecrets: false,
-      resolver: 'desktop-host-credential-broker',
+      resolver: credentialResolver,
       runtimeStatus: credentialRuntimeStatus,
       productionInjectionReady:
         credentialRuntimeStatus === 'not-required' ||
-        credentialRuntimeStatus === 'resolver-ready' ||
         credentialRuntimeStatus === 'app-server-provider-ready',
     },
   };

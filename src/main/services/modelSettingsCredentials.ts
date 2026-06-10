@@ -40,19 +40,12 @@ export function applyModelSettingsCredentials(settings: ModelSettings, credentia
     ...settings,
     providers: settings.providers.map((provider) => {
       const authType = normalizeProviderAuthType(provider);
-      if ((authType === 'api-key' || authType === 'oauth') && provider.apiKey?.trim()) {
-        credentialBroker.writeModelProviderCredential({
-          providerId: provider.id,
-          authType,
-          value: provider.apiKey,
-        });
-      }
-
       const { apiKey: _apiKey, ...persistedProvider } = provider;
+      const credentialState = readModelProviderCredentialState({ ...provider, authType }, credentialBroker);
       return {
         ...persistedProvider,
         authType,
-        apiKeyConfigured: readModelProviderCredentialState({ ...provider, authType }, credentialBroker).configured,
+        apiKeyConfigured: authType === 'none' || credentialState.configured,
       };
     }),
   };
@@ -97,19 +90,18 @@ function applyAppServerSyncRecord(
     appServerCredentialSyncedAt: syncRecord.credentialSyncedAt,
     appServerSyncError: syncRecord.lastError,
   };
-  const runtimeStatus =
-    state.configured &&
-    !state.rotationRequired &&
+  const appServerCredentialConfigured =
     state.authType === 'api-key' &&
     syncRecord.status === 'synced' &&
     Boolean(syncRecord.appServerProviderId) &&
-    Boolean(syncRecord.credentialSyncedAt)
-      ? 'app-server-provider-ready'
-      : state.runtimeStatus;
+    Boolean(syncRecord.credentialSyncedAt);
 
   return {
     ...state,
     ...appServerFields,
-    runtimeStatus,
+    configured: appServerCredentialConfigured || state.configured,
+    storageKind: appServerCredentialConfigured ? 'app-server-provider-store' : state.storageKind,
+    rotationRequired: appServerCredentialConfigured ? false : state.rotationRequired,
+    runtimeStatus: appServerCredentialConfigured ? 'app-server-provider-ready' : state.runtimeStatus,
   };
 }

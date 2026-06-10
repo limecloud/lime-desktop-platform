@@ -68,6 +68,131 @@ button:disabled {
   display: grid;
   grid-template-rows: 64px minmax(0, 1fr) 30px;
   min-height: 100vh;
+  font-size: calc(14px * var(--platform-font-scale, 1));
+}
+
+.app-shell[data-color="emerald"] {
+  --platform-accent: #2d4c38;
+  --platform-accent-soft: rgba(57, 87, 69, 0.06);
+}
+
+.app-shell[data-color="ocean"] {
+  --platform-accent: #0369a1;
+  --platform-accent-soft: rgba(2, 132, 199, 0.06);
+}
+
+.app-shell[data-color="vintage"] {
+  --platform-accent: #c25e03;
+  --platform-accent-soft: rgba(217, 119, 6, 0.06);
+}
+
+.app-shell[data-color="neon"] {
+  --platform-accent: #a21caf;
+  --platform-accent-soft: rgba(192, 38, 211, 0.06);
+}
+
+.app-shell[data-color="lime"] {
+  --platform-accent: #4d7c0f;
+  --platform-accent-soft: rgba(101, 163, 13, 0.06);
+}
+
+.app-shell[data-color="dusk"] {
+  --platform-accent: #7c2d12;
+  --platform-accent-soft: rgba(154, 52, 18, 0.06);
+}
+
+.app-shell[data-color="minimal"] {
+  --platform-accent: #1d4ed8;
+  --platform-accent-soft: rgba(29, 78, 216, 0.06);
+}
+
+.app-shell[data-color="vibrant"] {
+  --platform-accent: #0f766e;
+  --platform-accent-soft: rgba(13, 148, 136, 0.06);
+}
+
+.app-shell[data-color="nature"] {
+  --platform-accent: #166534;
+  --platform-accent-soft: rgba(21, 128, 61, 0.06);
+}
+
+.app-shell[data-color="arts"] {
+  --platform-accent: #334155;
+  --platform-accent-soft: rgba(71, 85, 105, 0.06);
+}
+
+.app-shell[data-color="luxury"] {
+  --platform-accent: #92400e;
+  --platform-accent-soft: rgba(180, 83, 9, 0.06);
+}
+
+.app-shell[data-theme="dark"] {
+  background: #101622;
+  color: #e5edf7;
+}
+
+.app-shell[data-theme="dark"] .topbar,
+.app-shell[data-theme="dark"] .statusbar,
+.app-shell[data-theme="dark"] .primary-panel,
+.app-shell[data-theme="dark"] .detail-panel,
+.app-shell[data-theme="dark"] .panel,
+.app-shell[data-theme="dark"] .metric-card,
+.app-shell[data-theme="dark"] .platform-module-card,
+.app-shell[data-theme="dark"] .update-row,
+.app-shell[data-theme="dark"] .provider-row,
+.app-shell[data-theme="dark"] .entry-item {
+  border-color: #28374b;
+  background: #161f2d;
+  color: #e5edf7;
+}
+
+.app-shell[data-theme="dark"] .sidebar {
+  border-color: #28374b;
+  background: #182536;
+}
+
+.app-shell[data-theme="dark"] .workspace,
+.app-shell[data-theme="dark"] .table-head,
+.app-shell[data-theme="dark"] .boundary-row,
+.app-shell[data-theme="dark"] .status-pill,
+.app-shell[data-theme="dark"] .readiness-badge,
+.app-shell[data-theme="dark"] .chip,
+.app-shell[data-theme="dark"] input,
+.app-shell[data-theme="dark"] select,
+.app-shell[data-theme="dark"] .settings-trigger,
+.app-shell[data-theme="dark"] .secondary-button,
+.app-shell[data-theme="dark"] .filter-button {
+  border-color: #233245;
+  background: #121b28;
+  color: #c6d2df;
+}
+
+.app-shell[data-theme="dark"] .nav-item {
+  color: #c6d2df;
+}
+
+.app-shell[data-theme="dark"] .nav-item.active,
+.app-shell[data-theme="dark"] .app-row:hover,
+.app-shell[data-theme="dark"] .app-row.selected {
+  border-color: #365782;
+  background: #172a44;
+  color: #d5e7ff;
+}
+
+.app-shell[data-theme="dark"] .brand-lockup span,
+.app-shell[data-theme="dark"] .sidebar-meta,
+.app-shell[data-theme="dark"] .statusbar,
+.app-shell[data-theme="dark"] .section-head p,
+.app-shell[data-theme="dark"] .muted,
+.app-shell[data-theme="dark"] .app-row small,
+.app-shell[data-theme="dark"] .metadata-list dt,
+.app-shell[data-theme="dark"] .info-row span,
+.app-shell[data-theme="dark"] .platform-module-card p,
+.app-shell[data-theme="dark"] .boundary-row span,
+.app-shell[data-theme="dark"] .provider-row span,
+.app-shell[data-theme="dark"] .event-row time,
+.app-shell[data-theme="dark"] .event-row strong {
+  color: #9aa9bb;
 }
 
 .topbar {

@@ -54,6 +54,42 @@ function writeJson<T>(filePath: string, value: T): void {
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
+function defaultPlatformGeneralSettings(): PlatformSettings['general'] {
+  return {
+    notificationsEnabled: true,
+    reduceMotion: false,
+    syncLocalAgentHistory: false,
+    quickWindowShortcutEnabled: true,
+    commandWhitelistEnabled: false,
+    permissionMode: 'auto-approve',
+    thinkingMode: 'auto',
+    showToolCalls: true,
+    expandToolCallsByDefault: false,
+  };
+}
+
+function defaultPlatformAppearanceSettings(): PlatformSettings['appearance'] {
+  return {
+    colorTheme: 'emerald',
+    fontScale: 1,
+    serifEnabled: false,
+  };
+}
+
+function normalizePlatformSettings(settings: PlatformSettings): PlatformSettings {
+  return {
+    ...settings,
+    appearance: {
+      ...defaultPlatformAppearanceSettings(),
+      ...(settings.appearance ?? {}),
+    },
+    general: {
+      ...defaultPlatformGeneralSettings(),
+      ...(settings.general ?? {}),
+    },
+  };
+}
+
 function validateStoreSegment(kind: 'appId' | 'namespace' | 'documentId', value: string): string {
   const normalized = value.trim();
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(normalized) || normalized.includes('..')) {
@@ -67,7 +103,7 @@ function validateStoreSegment(kind: 'appId' | 'namespace' | 'documentId', value:
 function validateAppStorageNamespace(namespace: string): string {
   const safeNamespace = validateStoreSegment('namespace', namespace);
   if (/secret|credential|token|apikey|api-key|oauth/i.test(safeNamespace)) {
-    throw new Error('App storage 不能保存凭证、token、API Key 或 OAuth 数据；这些数据必须走 Credential Broker。');
+    throw new Error('App storage 不能保存凭证、token、API Key 或 OAuth 数据；这些数据必须走平台凭证边界或 App Server provider store。');
   }
   return safeNamespace;
 }
@@ -75,7 +111,7 @@ function validateAppStorageNamespace(namespace: string): string {
 function validateAppStorageDocumentId(documentId: string): string {
   const safeDocumentId = validateStoreSegment('documentId', documentId);
   if (/secret|credential|token|apikey|api-key|oauth|password|private-key|client-secret/i.test(safeDocumentId)) {
-    throw new Error('App storage documentId 不能表达凭证、token、API Key 或 OAuth 数据；这些数据必须走 Credential Broker。');
+    throw new Error('App storage documentId 不能表达凭证、token、API Key 或 OAuth 数据；这些数据必须走平台凭证边界或 App Server provider store。');
   }
   return safeDocumentId;
 }
@@ -83,7 +119,7 @@ function validateAppStorageDocumentId(documentId: string): string {
 function validateProductAppSettingsNamespace(namespace: string): string {
   const safeNamespace = validateStoreSegment('namespace', namespace);
   if (/secret|credential|token|apikey|api-key|oauth/i.test(safeNamespace)) {
-    throw new Error('Product App settings 不能保存凭证、token、API Key 或 OAuth 数据；这些数据必须走 Credential Broker。');
+    throw new Error('Product App settings 不能保存凭证、token、API Key 或 OAuth 数据；这些数据必须走平台凭证边界或 App Server provider store。');
   }
   return safeNamespace;
 }
@@ -100,7 +136,7 @@ function assertNoSensitiveStoreValue(surface: 'Product App settings' | 'App stor
 
   for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
     if (isSensitiveSettingsKey(key)) {
-      throw new Error(`${surface} ${path}.${key} 不能保存凭证、token、API Key 或 OAuth 数据；这些数据必须走 Credential Broker。`);
+      throw new Error(`${surface} ${path}.${key} 不能保存凭证、token、API Key 或 OAuth 数据；这些数据必须走平台凭证边界或 App Server provider store。`);
     }
     assertNoSensitiveStoreValue(surface, nestedValue, `${path}.${key}`);
   }
@@ -149,10 +185,10 @@ export class PlatformStore {
     const userStateDir = join(app.getPath('userData'), 'state');
     mkdirSync(userStateDir, { recursive: true });
 
-    const platformSettings = readJson<PlatformSettings>(
+    const platformSettings = normalizePlatformSettings(readJson<PlatformSettings>(
       join(userStateDir, 'platform-settings.json'),
       this.createDefaultPlatformSettings(join(app.getPath('userData'), 'workspace')),
-    );
+    ));
 
     this.paths = this.createPaths(userStateDir, platformSettings.workspacePath);
     this.ensureDirectories();
@@ -270,17 +306,18 @@ export class PlatformStore {
   }
 
   readPlatformSettings(): PlatformSettings {
-    return readJson<PlatformSettings>(
+    return normalizePlatformSettings(readJson<PlatformSettings>(
       join(this.paths.userStateDir, 'platform-settings.json'),
       this.createDefaultPlatformSettings(this.paths.workspaceRoot),
-    );
+    ));
   }
 
   writePlatformSettings(settings: PlatformSettings): void {
-    writeJson(join(this.paths.userStateDir, 'platform-settings.json'), settings);
+    const normalizedSettings = normalizePlatformSettings(settings);
+    writeJson(join(this.paths.userStateDir, 'platform-settings.json'), normalizedSettings);
 
-    if (settings.workspacePath !== this.paths.workspaceRoot) {
-      this.paths = this.createPaths(this.paths.userStateDir, settings.workspacePath);
+    if (normalizedSettings.workspacePath !== this.paths.workspaceRoot) {
+      this.paths = this.createPaths(this.paths.userStateDir, normalizedSettings.workspacePath);
       this.ensureDirectories();
     }
   }
@@ -395,41 +432,7 @@ export class PlatformStore {
     return {
       version: '1',
       updatedAt: nowIso(),
-      defaultAgentProviderId: 'openai-compatible',
-      defaultTextModelId: 'gpt-4.1-mini',
-      providers: [
-        {
-          id: 'openai-compatible',
-          displayName: 'OpenAI Compatible',
-          protocol: 'openai-compatible',
-          capabilityKinds: ['text', 'image'],
-          enabled: true,
-          apiKeyConfigured: false,
-          authType: 'api-key',
-          useResponsesApi: true,
-          models: ['gpt-4.1-mini', 'gpt-4.1', 'o4-mini'],
-        },
-        {
-          id: 'anthropic-compatible',
-          displayName: 'Anthropic Compatible',
-          protocol: 'anthropic-compatible',
-          capabilityKinds: ['text'],
-          enabled: false,
-          apiKeyConfigured: false,
-          authType: 'api-key',
-          models: ['claude-sonnet-4-5', 'claude-opus-4-1'],
-        },
-        {
-          id: 'local',
-          displayName: 'Local Runtime',
-          protocol: 'local',
-          capabilityKinds: ['text'],
-          enabled: false,
-          apiKeyConfigured: true,
-          authType: 'none',
-          models: ['local-default'],
-        },
-      ],
+      providers: [],
     };
   }
 
@@ -448,7 +451,6 @@ export class PlatformStore {
     mkdirSync(join(this.paths.workspaceStateDir, 'app-storage'), { recursive: true });
     mkdirSync(join(this.paths.workspaceStateDir, 'product-settings'), { recursive: true });
     mkdirSync(this.paths.userStateDir, { recursive: true });
-    mkdirSync(join(this.paths.userStateDir, 'credential-broker'), { recursive: true });
     mkdirSync(join(this.paths.userStateDir, 'product-settings'), { recursive: true });
   }
 
@@ -458,12 +460,14 @@ export class PlatformStore {
       updatedAt: nowIso(),
       locale: 'zh-CN',
       theme: 'system',
+      appearance: defaultPlatformAppearanceSettings(),
       workspacePath,
       proxy: {
         enabled: false,
         url: '',
       },
       developerMode: true,
+      general: defaultPlatformGeneralSettings(),
     };
   }
 

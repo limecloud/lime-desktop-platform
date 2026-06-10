@@ -5,7 +5,7 @@ import {
   createAppServerRuntimeOptionsProjection,
 } from '../../src/main/services/appServerRuntimeService';
 import type { AppServerJsonRpcClient } from '../../src/main/services/appServerJsonRpcClient';
-import type { CapabilityInvokeInput, ModelSettings } from '../../src/shared/types';
+import type { CapabilityInvokeInput, ModelProviderConfig, ModelProviderCredentialState, ModelSettings } from '../../src/shared/types';
 
 function createModelSettings(overrides: Partial<ModelSettings> = {}): ModelSettings {
   return {
@@ -51,6 +51,33 @@ function createInvokeInput(input: CapabilityInvokeInput['input'] = {}): Capabili
   };
 }
 
+function createBrokerCredentialState(provider: ModelProviderConfig): ModelProviderCredentialState {
+  const authType = provider.authType ?? 'api-key';
+  if (authType === 'none') {
+    return {
+      providerId: provider.id,
+      authType,
+      configured: true,
+      storageKind: 'none',
+      keychainBacked: false,
+      rotationRequired: false,
+      runtimeStatus: 'not-required',
+      plaintextSecrets: false,
+    };
+  }
+
+  return {
+    providerId: provider.id,
+    authType,
+    configured: true,
+    storageKind: 'local-encrypted-file',
+    keychainBacked: false,
+    rotationRequired: false,
+    runtimeStatus: 'broker-reference-only',
+    plaintextSecrets: false,
+  };
+}
+
 test('start 生成 host-mediated runtimeContext 并随 request/result/event 同步返回', async () => {
   const service = new AppServerRuntimeService();
   const result = await service.start(createInvokeInput({ toolPolicy: { permissionMode: 'safe' } }), {
@@ -65,7 +92,7 @@ test('start 生成 host-mediated runtimeContext 并随 request/result/event 同�
   assert.equal(result.runtimeContext.permissionMode, 'safe');
   assert.equal(result.runtimeContext.credentialPolicy.handoff, 'credential-ref-only');
   assert.equal(result.runtimeContext.credentialPolicy.plaintextSecrets, false);
-  assert.equal(result.runtimeContext.credentialPolicy.resolver, 'desktop-host-credential-broker');
+  assert.equal(result.runtimeContext.credentialPolicy.resolver, 'app-server-provider-store');
   assert.equal(result.runtimeContext.credentialPolicy.runtimeStatus, 'not-required');
   assert.equal(result.runtimeContext.credentialPolicy.productionInjectionReady, true);
   assert.equal(result.runtimeContext.modelProfile?.settingsVersion, 'test-settings-v1');
@@ -81,7 +108,7 @@ test('start 生成 host-mediated runtimeContext 并随 request/result/event 同�
 });
 
 test('preferredModelId 可切换到非默认 provider，并只传 credentialRef 不传明文凭证', async () => {
-  const service = new AppServerRuntimeService();
+  const service = new AppServerRuntimeService(undefined, createBrokerCredentialState);
   const result = await service.start(
     createInvokeInput({
       modelPolicy: { capability: 'agent', preferredModelId: 'gpt-4.1-mini' },
@@ -112,6 +139,7 @@ test('preferredModelId 可切换到非默认 provider，并只传 credentialRef 
   assert.equal(result.runtimeContext.credentialPolicy.productionInjectionReady, false);
   assert.equal(modelProfile?.modelId, 'gpt-4.1-mini');
   assert.equal(modelProfile?.requestedModelId, 'gpt-4.1-mini');
+  assert.equal(result.runtimeContext.credentialPolicy.resolver, 'desktop-host-credential-broker');
 
   const serializedRuntimeContext = JSON.stringify(result.runtimeContext);
   assert.equal(serializedRuntimeContext.includes('apiKey'), false);
@@ -154,6 +182,62 @@ test('缺少可用模型时保留 fail-closed，并暴露可修复的模型设�
   );
 });
 
+test('provider 已同步但没有模型 ID 时不能判为可用 Agent 模型', async () => {
+  const fakeClient = {
+    connected: true,
+    startAgentRun: async () => {
+      throw new Error('缺少模型 ID 时不应进入 App Server turn start');
+    },
+  } as unknown as AppServerJsonRpcClient;
+  const service = new AppServerRuntimeService(
+    {
+      getClient: () => fakeClient,
+      isConnected: () => true,
+      isConfigured: () => true,
+    },
+    (provider) => ({
+      providerId: provider.id,
+      authType: provider.authType ?? 'api-key',
+      configured: true,
+      storageKind: 'app-server-provider-store',
+      keychainBacked: false,
+      rotationRequired: false,
+      runtimeStatus: 'app-server-provider-ready',
+      appServerProviderId: provider.id,
+      appServerSyncStatus: 'synced',
+      plaintextSecrets: false,
+    }),
+  );
+
+  const result = await service.start(createInvokeInput(), {
+    modelSettings: createModelSettings({
+      defaultAgentProviderId: 'provider-without-models',
+      defaultTextModelId: undefined,
+      providers: [
+        {
+          id: 'provider-without-models',
+          displayName: 'Provider Without Models',
+          protocol: 'openai-compatible',
+          capabilityKinds: ['text'],
+          enabled: true,
+          apiKeyConfigured: true,
+          authType: 'api-key',
+          baseUrl: 'https://models.example.test/v1',
+          models: [],
+        },
+      ],
+    }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.state, 'needs-setup');
+  assert.equal(result.runtimeContext.modelProfile, undefined);
+  assert.equal(
+    result.readiness.reasons.some((reason) => reason.code === 'agent-model-required'),
+    true,
+  );
+});
+
 test('diagnostics 使用同一份非敏感 runtimeContext 投影', () => {
   const diagnostics = new AppServerRuntimeService().describeRuntime(createModelSettings());
 
@@ -169,7 +253,7 @@ test('diagnostics 使用同一份非敏感 runtimeContext 投影', () => {
 });
 
 test('runtime options projection 映射为 App Server current provider/model 字段', async () => {
-  const service = new AppServerRuntimeService();
+  const service = new AppServerRuntimeService(undefined, createBrokerCredentialState);
   const result = await service.start(
     createInvokeInput({
       modelPolicy: { capability: 'agent', preferredModelId: 'gpt-4.1-mini' },
@@ -202,7 +286,7 @@ test('provider 已同步到 App Server 时 runtime providerPreference 使用 App
     providerId: provider.id,
     authType: provider.authType ?? 'api-key',
     configured: true,
-    storageKind: 'local-encrypted-file',
+    storageKind: provider.id === 'openai-compatible' ? 'app-server-provider-store' : 'none',
     keychainBacked: false,
     rotationRequired: false,
     runtimeStatus: provider.id === 'openai-compatible' ? 'app-server-provider-ready' : 'not-required',
@@ -221,6 +305,9 @@ test('provider 已同步到 App Server 时 runtime providerPreference 使用 App
 
   assert.equal(result.runtimeContext.modelProfile?.provider.id, 'openai-compatible');
   assert.equal(result.runtimeContext.modelProfile?.provider.appServerProviderId, 'custom-provider-1');
+  assert.equal(result.runtimeContext.modelProfile?.provider.credentialRef?.resolver, 'app-server-provider-store');
+  assert.equal(result.runtimeContext.modelProfile?.provider.credentialRef?.storageKind, 'app-server-provider-store');
+  assert.equal(result.runtimeContext.credentialPolicy.resolver, 'app-server-provider-store');
   assert.equal(result.runtimeContext.credentialPolicy.runtimeStatus, 'app-server-provider-ready');
   assert.equal(result.runtimeContext.credentialPolicy.productionInjectionReady, true);
   assert.equal(
@@ -232,6 +319,49 @@ test('provider 已同步到 App Server 时 runtime providerPreference 使用 App
   assert.equal(projection.providerPreference, 'custom-provider-1');
   assert.equal(projection.modelPreference, 'gpt-4.1-mini');
   assert.equal(JSON.stringify(projection).includes('sk-'), false);
+});
+
+test('legacy resolver-ready 不再作为 live provider production ready', async () => {
+  const fakeClient = {
+    connected: true,
+    startAgentRun: async () => {
+      throw new Error('legacy resolver-ready 不应进入 App Server turn start');
+    },
+  } as unknown as AppServerJsonRpcClient;
+  const service = new AppServerRuntimeService(
+    {
+      getClient: () => fakeClient,
+      isConnected: () => true,
+      isConfigured: () => true,
+    },
+    (provider) => ({
+      providerId: provider.id,
+      authType: provider.authType ?? 'api-key',
+      configured: true,
+      storageKind: provider.authType === 'none' ? 'none' : 'local-encrypted-file',
+      keychainBacked: false,
+      rotationRequired: false,
+      runtimeStatus: provider.authType === 'none' ? 'not-required' : 'resolver-ready',
+      plaintextSecrets: false,
+    }),
+  );
+  const result = await service.start(
+    createInvokeInput({
+      modelPolicy: { capability: 'agent', preferredModelId: 'gpt-4.1-mini' },
+    }),
+    { modelSettings: createModelSettings(), workspaceId: '/workspace', locale: 'zh-CN' },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.state, 'blocked');
+  assert.equal(result.runtimeContext.credentialPolicy.resolver, 'desktop-host-credential-broker');
+  assert.equal(result.runtimeContext.credentialPolicy.runtimeStatus, 'resolver-ready');
+  assert.equal(result.runtimeContext.credentialPolicy.productionInjectionReady, false);
+  assert.equal(result.runtimeContext.modelProfile?.provider.credentialRef?.productionInjectionReady, false);
+  assert.equal(
+    result.readiness.reasons.some((reason) => reason.code === 'host-credential-resolver-required' && !reason.fixable),
+    true,
+  );
 });
 
 test('存在 App Server client 时 start 进入 JSON-RPC started 路径', async () => {

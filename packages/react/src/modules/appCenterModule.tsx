@@ -569,6 +569,7 @@ function capabilityLabel(capability: PlatformCapability): string {
     'lime.branding': '品牌投影',
     'lime.billing': '充值订阅',
     'lime.appUpdates': 'Package 更新',
+    'lime.settings': '平台设置',
     'lime.download': '下载',
     'lime.permissions': '权限',
     'lime.diagnostics': '诊断',

@@ -50,7 +50,7 @@ function createRuntimeContext(): AgentRuntimeContext {
     credentialPolicy: {
       handoff: 'credential-ref-only',
       plaintextSecrets: false,
-      resolver: 'desktop-host-credential-broker',
+      resolver: 'app-server-provider-store',
       runtimeStatus: 'not-required',
       productionInjectionReady: true,
     },
@@ -407,6 +407,89 @@ test('AppServerJsonRpcClient 复用已记录 App Server provider id 时不调用
   );
 });
 
+test('AppServerJsonRpcClient 只读列出 App Server provider projection，不读取明文 key', async () => {
+  const transport = new MemoryTransport();
+  const client = new AppServerJsonRpcClient(transport);
+  const listPromise = client.listModelProviders({ settingsVersion: 'settings-v4' });
+
+  const initialize = transport.written[0] as { id: number; method: string };
+  assert.equal(initialize.method, 'initialize');
+  transport.send({ id: initialize.id, result: { serverInfo: { name: 'app-server' }, capabilities: {} } });
+  await waitForWriteCount(transport, 3);
+
+  const initialized = transport.written[1] as { method: string };
+  const list = transport.written[2] as { id: number; method: string };
+  assert.equal(initialized.method, 'initialized');
+  assert.equal(list.method, 'modelProvider/list');
+  transport.send({
+    id: list.id,
+    result: {
+      providers: [
+        {
+          id: 'custom-provider-1',
+          name: 'OpenAI Compatible',
+          type: 'openai-response',
+          api_host: 'https://models.example.test/v1',
+          enabled: true,
+          custom_models: ['gpt-4.1-mini'],
+          api_key_count: 1,
+          updated_at: '2026-06-09T00:00:00.000Z',
+          api_keys: [{ id: 'key-1', api_key_masked: 'sk-****' }],
+        },
+      ],
+    },
+  });
+
+  const projections = await listPromise;
+  assert.equal(projections.length, 1);
+  assert.equal(projections[0]?.provider.id, 'custom-provider-1');
+  assert.equal(projections[0]?.provider.protocol, 'openai-compatible');
+  assert.equal(projections[0]?.provider.useResponsesApi, true);
+  assert.equal(projections[0]?.provider.apiKeyConfigured, true);
+  assert.equal(projections[0]?.syncRecord.appServerProviderId, 'custom-provider-1');
+  assert.equal(projections[0]?.syncRecord.credentialSyncedAt, '2026-06-09T00:00:00.000Z');
+  assert.equal(JSON.stringify(projections).includes('sk-****'), false);
+  assert.equal(
+    transport.written.some((write) => (write as { method?: string }).method === 'modelProviderKey/next'),
+    false,
+  );
+});
+
+test('AppServerJsonRpcClient 只投影 App Server 显式模型，不按 provider 类型补默认模型', async () => {
+  const transport = new MemoryTransport();
+  const client = new AppServerJsonRpcClient(transport);
+  const listPromise = client.listModelProviders({ settingsVersion: 'settings-v5' });
+
+  const initialize = transport.written[0] as { id: number; method: string };
+  assert.equal(initialize.method, 'initialize');
+  transport.send({ id: initialize.id, result: { serverInfo: { name: 'app-server' }, capabilities: {} } });
+  await waitForWriteCount(transport, 3);
+
+  const list = transport.written[2] as { id: number; method: string };
+  assert.equal(list.method, 'modelProvider/list');
+  transport.send({
+    id: list.id,
+    result: {
+      providers: [
+        {
+          id: 'provider-without-models',
+          name: 'Provider Without Models',
+          type: 'openai-response',
+          api_host: 'https://models.example.test/v1',
+          enabled: true,
+          api_key_count: 1,
+        },
+      ],
+    },
+  });
+
+  const projections = await listPromise;
+  assert.equal(projections.length, 1);
+  assert.deepEqual(projections[0]?.provider.models, []);
+  assert.equal(JSON.stringify(projections).includes('gpt-4.1'), false);
+  assert.equal(JSON.stringify(projections).includes('o4-mini'), false);
+});
+
 test('resolveAppServerSidecarLaunchConfig 只在 APP_SERVER_BIN 配置时启用 stdio sidecar', () => {
   assert.equal(resolveAppServerSidecarLaunchConfig({}), undefined);
 
@@ -424,6 +507,45 @@ test('resolveAppServerSidecarLaunchConfig 只在 APP_SERVER_BIN 配置时启用 
   assert.equal(config?.source, 'env-bin');
   assert.equal(config?.env.APP_SERVER_BACKEND_MODE, 'external');
   assert.equal(config?.env.APP_SERVER_BACKEND_COMMAND, 'backend-command');
+});
+
+test('resolveAppServerSidecarLaunchConfig 为 env-bin sidecar 默认注入 App Server data dir', () => {
+  const config = resolveAppServerSidecarLaunchConfig(
+    {
+      APP_SERVER_BIN: '/opt/app-server',
+      APP_SERVER_ARGS: '--flag value',
+    },
+    { userDataPath: '/Users/test/Library/Application Support/Lime Desktop Platform' },
+  );
+
+  assert.equal(config?.command, '/opt/app-server');
+  assert.deepEqual(config?.args, [
+    '--stdio',
+    '--flag',
+    'value',
+    '--data-dir',
+    '/Users/test/Library/Application Support/Lime Desktop Platform/app-server',
+  ]);
+});
+
+test('resolveAppServerSidecarLaunchConfig 在 APP_SERVER_ARGS 已声明 data dir 时不重复注入', () => {
+  const splitArgConfig = resolveAppServerSidecarLaunchConfig(
+    {
+      APP_SERVER_BIN: '/opt/app-server',
+      APP_SERVER_ARGS: '--data-dir /tmp/app-server --flag value',
+    },
+    { userDataPath: '/Users/test/Library/Application Support/Lime Desktop Platform' },
+  );
+  assert.deepEqual(splitArgConfig?.args, ['--stdio', '--data-dir', '/tmp/app-server', '--flag', 'value']);
+
+  const equalsArgConfig = resolveAppServerSidecarLaunchConfig(
+    {
+      APP_SERVER_BIN: '/opt/app-server',
+      APP_SERVER_ARGS: '--data-dir=/tmp/app-server --flag value',
+    },
+    { userDataPath: '/Users/test/Library/Application Support/Lime Desktop Platform' },
+  );
+  assert.deepEqual(equalsArgConfig?.args, ['--stdio', '--data-dir=/tmp/app-server', '--flag', 'value']);
 });
 
 test('resolveAppServerSidecarLaunchConfig 从 packaged resources manifest 解析 sidecar 并校验 sha256', () => {
@@ -454,6 +576,7 @@ test('resolveAppServerSidecarLaunchConfig 从 packaged resources manifest 解析
     { APP_SERVER_ARGS: '--app-policy policy.json' },
     {
       resourcesPath: resourcesRoot,
+      userDataPath: '/Users/test/Library/Application Support/Lime Desktop Platform',
       platform: 'darwin',
       arch: 'arm64',
       exists: (path) => files.has(path),
@@ -468,7 +591,15 @@ test('resolveAppServerSidecarLaunchConfig 从 packaged resources manifest 解析
   );
 
   assert.equal(config?.command, binaryPath);
-  assert.deepEqual(config?.args, ['--stdio', '--backend', 'unavailable', '--app-policy', 'policy.json']);
+  assert.deepEqual(config?.args, [
+    '--stdio',
+    '--backend',
+    'unavailable',
+    '--app-policy',
+    'policy.json',
+    '--data-dir',
+    '/Users/test/Library/Application Support/Lime Desktop Platform/app-server',
+  ]);
   assert.equal(config?.source, 'packaged-resource');
   assert.equal(config?.manifestPath, manifestPath);
   assert.equal(config?.binarySha256, sha256);

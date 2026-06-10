@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { app } from 'electron';
 import { seedCatalog } from './seedCatalog';
 import { AppServerSidecarLifecycle, resolveAppServerSidecarLaunchConfig } from './appServerJsonRpcClient';
@@ -46,10 +46,12 @@ import type {
   LoginInput,
   ModelProviderAppServerSyncRecord,
   ModelSettings,
+  ModelSettingsSnapshot,
   PlatformBootstrap,
   PlatformCapability,
   PlatformNavigationIntent,
   PlatformNavigationResult,
+  RuntimeBridgeDiscoveryDescriptor,
   PlatformSettings,
   ProductAppSettingsReadInput,
   ProductAppSettingsRecord,
@@ -68,6 +70,85 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+function runtimeBridgeDiscoveryPath(): string {
+  const overridePath = process.env.LIME_DESKTOP_PLATFORM_BRIDGE_DISCOVERY_PATH?.trim();
+  if (overridePath) return overridePath;
+  return join(app.getPath('appData'), 'Lime Desktop Platform', 'runtime-bridge-discovery.json');
+}
+
+function writeRuntimeBridgeDiscovery(descriptor: RuntimeBridgeDiscoveryDescriptor): void {
+  const filePath = runtimeBridgeDiscoveryPath();
+  mkdirSync(dirname(filePath), { recursive: true });
+  writeFileSync(filePath, JSON.stringify(descriptor, null, 2), 'utf8');
+}
+
+function removeRuntimeBridgeDiscovery(): void {
+  rmSync(runtimeBridgeDiscoveryPath(), { force: true });
+}
+
+function collectTransientModelProviderApiKeys(settings: ModelSettings): Record<string, string> {
+  const apiKeys: Record<string, string> = {};
+  for (const provider of settings.providers) {
+    const apiKey = provider.apiKey?.trim();
+    if (apiKey) {
+      apiKeys[provider.id] = apiKey;
+    }
+  }
+  return apiKeys;
+}
+
+function hasTransientModelProviderApiKeys(apiKeys: Record<string, string>): boolean {
+  return Object.keys(apiKeys).length > 0;
+}
+
+function resolveProjectedDefaultProviderId(
+  currentDefaultProviderId: string | undefined,
+  providers: ModelSettings['providers'],
+): string | undefined {
+  if (currentDefaultProviderId && providers.some((provider) => provider.id === currentDefaultProviderId)) {
+    return currentDefaultProviderId;
+  }
+  return providers.find((provider) => provider.enabled && provider.capabilityKinds.includes('text'))?.id ?? providers[0]?.id;
+}
+
+function resolveProjectedDefaultTextModelId(
+  currentDefaultModelId: string | undefined,
+  currentDefaultProviderId: string | undefined,
+  providers: ModelSettings['providers'],
+): string | undefined {
+  if (
+    currentDefaultModelId &&
+    providers.some((provider) => provider.enabled && provider.models.includes(currentDefaultModelId))
+  ) {
+    return currentDefaultModelId;
+  }
+  const defaultProvider = providers.find((provider) => provider.id === currentDefaultProviderId);
+  return defaultProvider?.models[0] ?? providers.find((provider) => provider.enabled)?.models[0] ?? providers[0]?.models[0];
+}
+
+function createModelSettingsSnapshot(settings: ModelSettings): ModelSettingsSnapshot {
+  return {
+    version: settings.version,
+    updatedAt: settings.updatedAt,
+    defaultAgentProviderId: settings.defaultAgentProviderId,
+    defaultTextModelId: settings.defaultTextModelId,
+    defaultImageModelId: settings.defaultImageModelId,
+    defaultVideoModelId: settings.defaultVideoModelId,
+    providers: settings.providers.map((provider) => ({
+      id: provider.id,
+      displayName: provider.displayName,
+      protocol: provider.protocol,
+      capabilityKinds: provider.capabilityKinds,
+      enabled: provider.enabled,
+      apiKeyConfigured: provider.apiKeyConfigured,
+      authType: provider.authType,
+      baseUrl: provider.baseUrl,
+      useResponsesApi: provider.useResponsesApi,
+      models: provider.models,
+    })),
+  };
+}
+
 function hashValue(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
@@ -81,6 +162,149 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
+}
+
+function modelProtocol(value: unknown): ModelSettings['providers'][number]['protocol'] {
+  return value === 'anthropic-compatible' ||
+    value === 'gemini-native' ||
+    value === 'local' ||
+    value === 'openai-compatible'
+    ? value
+    : 'openai-compatible';
+}
+
+function modelCapabilityKinds(value: unknown): ModelSettings['providers'][number]['capabilityKinds'] {
+  const kinds = stringArray(value).filter(
+    (item): item is ModelSettings['providers'][number]['capabilityKinds'][number] =>
+      item === 'text' || item === 'image' || item === 'video',
+  );
+  return kinds.length ? kinds : ['text'];
+}
+
+function modelAuthType(value: unknown): ModelSettings['providers'][number]['authType'] {
+  return value === 'oauth' || value === 'none' || value === 'api-key' ? value : 'api-key';
+}
+
+function modelProviderFromCapabilityInput(value: unknown): ModelSettings['providers'][number] | undefined {
+  const payload = asRecord(value);
+  const id = optionalString(payload.id)?.trim();
+  if (!id) {
+    return undefined;
+  }
+  return {
+    id,
+    displayName: optionalString(payload.displayName)?.trim() || id,
+    protocol: modelProtocol(payload.protocol),
+    capabilityKinds: modelCapabilityKinds(payload.capabilityKinds),
+    enabled: typeof payload.enabled === 'boolean' ? payload.enabled : true,
+    apiKeyConfigured: typeof payload.apiKeyConfigured === 'boolean' ? payload.apiKeyConfigured : false,
+    apiKey: optionalString(payload.apiKey)?.trim(),
+    authType: modelAuthType(payload.authType),
+    baseUrl: optionalString(payload.baseUrl)?.trim(),
+    useResponsesApi: typeof payload.useResponsesApi === 'boolean' ? payload.useResponsesApi : undefined,
+    models: stringArray(payload.models),
+  };
+}
+
+function modelSettingsFromCapabilityInput(current: ModelSettings, input: unknown): ModelSettings {
+  const payload = asRecord(input);
+  const settings = asRecord(payload.settings ?? input);
+  const providers = Array.isArray(settings.providers)
+    ? settings.providers.map(modelProviderFromCapabilityInput).filter((provider): provider is ModelSettings['providers'][number] => Boolean(provider))
+    : current.providers;
+  return {
+    ...current,
+    defaultAgentProviderId: optionalString(settings.defaultAgentProviderId) ?? current.defaultAgentProviderId,
+    defaultTextModelId: optionalString(settings.defaultTextModelId) ?? current.defaultTextModelId,
+    defaultImageModelId: optionalString(settings.defaultImageModelId) ?? current.defaultImageModelId,
+    defaultVideoModelId: optionalString(settings.defaultVideoModelId) ?? current.defaultVideoModelId,
+    providers,
+  };
+}
+
+function themeMode(value: unknown, fallback: PlatformSettings['theme']): PlatformSettings['theme'] {
+  return value === 'light' || value === 'dark' || value === 'system' ? value : fallback;
+}
+
+function platformColorTheme(
+  value: unknown,
+  fallback: PlatformSettings['appearance']['colorTheme'],
+): PlatformSettings['appearance']['colorTheme'] {
+  return value === 'emerald' ||
+    value === 'ocean' ||
+    value === 'vintage' ||
+    value === 'neon' ||
+    value === 'lime' ||
+    value === 'dusk' ||
+    value === 'minimal' ||
+    value === 'vibrant' ||
+    value === 'nature' ||
+    value === 'arts' ||
+    value === 'luxury'
+    ? value
+    : fallback;
+}
+
+function boundedNumber(value: unknown, fallback: number, min: number, max: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, value));
+}
+
+function permissionMode(value: unknown, fallback: PlatformSettings['general']['permissionMode']): PlatformSettings['general']['permissionMode'] {
+  return value === 'auto-approve' || value === 'safe' ? value : fallback;
+}
+
+function thinkingMode(value: unknown, fallback: PlatformSettings['general']['thinkingMode']): PlatformSettings['general']['thinkingMode'] {
+  return value === 'auto' || value === 'off' || value === 'low' || value === 'medium' || value === 'high' || value === 'max'
+    ? value
+    : fallback;
+}
+
+function platformSettingsFromCapabilityInput(current: PlatformSettings, input: unknown): PlatformSettings {
+  const payload = asRecord(input);
+  const settings = asRecord(payload.settings ?? input);
+  const proxy = asRecord(settings.proxy);
+  const appearance = asRecord(settings.appearance);
+  const general = asRecord(settings.general);
+  return {
+    ...current,
+    locale: optionalString(settings.locale)?.trim() || current.locale,
+    theme: themeMode(settings.theme, current.theme),
+    appearance: {
+      ...current.appearance,
+      colorTheme: platformColorTheme(appearance.colorTheme, current.appearance.colorTheme),
+      fontScale: boundedNumber(appearance.fontScale, current.appearance.fontScale, 0.85, 1.25),
+      serifEnabled: typeof appearance.serifEnabled === 'boolean' ? appearance.serifEnabled : current.appearance.serifEnabled,
+    },
+    workspacePath: optionalString(settings.workspacePath)?.trim() || current.workspacePath,
+    proxy: {
+      enabled: typeof proxy.enabled === 'boolean' ? proxy.enabled : current.proxy.enabled,
+      url: optionalString(proxy.url)?.trim() ?? current.proxy.url,
+    },
+    developerMode: typeof settings.developerMode === 'boolean' ? settings.developerMode : current.developerMode,
+    general: {
+      ...current.general,
+      notificationsEnabled: typeof general.notificationsEnabled === 'boolean' ? general.notificationsEnabled : current.general.notificationsEnabled,
+      reduceMotion: typeof general.reduceMotion === 'boolean' ? general.reduceMotion : current.general.reduceMotion,
+      syncLocalAgentHistory: typeof general.syncLocalAgentHistory === 'boolean' ? general.syncLocalAgentHistory : current.general.syncLocalAgentHistory,
+      quickWindowShortcutEnabled: typeof general.quickWindowShortcutEnabled === 'boolean' ? general.quickWindowShortcutEnabled : current.general.quickWindowShortcutEnabled,
+      commandWhitelistEnabled: typeof general.commandWhitelistEnabled === 'boolean' ? general.commandWhitelistEnabled : current.general.commandWhitelistEnabled,
+      permissionMode: permissionMode(general.permissionMode, current.general.permissionMode),
+      thinkingMode: thinkingMode(general.thinkingMode, current.general.thinkingMode),
+      showToolCalls: typeof general.showToolCalls === 'boolean' ? general.showToolCalls : current.general.showToolCalls,
+      expandToolCallsByDefault: typeof general.expandToolCallsByDefault === 'boolean'
+        ? general.expandToolCallsByDefault
+        : current.general.expandToolCallsByDefault,
+    },
+  };
 }
 
 function stateToLifecycleState(state: ReadinessResult['state']): InstalledAppRecord['status'] {
@@ -103,6 +327,10 @@ function entryLabel(entry: DesktopAppManifest['entries'][number]): string {
   return labels[entry.kind] ?? entry.key;
 }
 
+interface PlatformServiceOptions {
+  publishRuntimeBridgeDiscovery?: boolean;
+}
+
 export class PlatformService {
   private readonly store = new PlatformStore();
   private readonly credentialBroker = new CredentialBroker(this.store.getCredentialBrokerDir());
@@ -114,11 +342,15 @@ export class PlatformService {
   private readonly runtimeBridge = new RuntimeBridgeServer(
     (input) => this.invokeCapability(input),
     (input) => this.openNavigationIntent(input),
+    (input) => this.createHostSnapshot(input),
   );
   private lastCatalogSyncAt = 0;
   private lastControlPlaneProjectionSyncAt = 0;
 
-  constructor(private readonly appServerClientProvider?: AppServerRuntimeClientProvider) {
+  constructor(
+    private readonly appServerClientProvider?: AppServerRuntimeClientProvider,
+    private readonly options: PlatformServiceOptions = {},
+  ) {
     this.appServerSidecar = appServerClientProvider ? undefined : this.createAppServerSidecarLifecycle();
     const runtimeClientProvider = this.appServerSidecar
       ? {
@@ -136,6 +368,9 @@ export class PlatformService {
           this.store.readModelProviderAppServerSyncRecords()[provider.id],
         ),
     );
+    if (this.options.publishRuntimeBridgeDiscovery !== false) {
+      void this.publishRuntimeBridgeDiscovery();
+    }
   }
 
   private createAppServerSidecarLifecycle(): AppServerSidecarLifecycle | undefined {
@@ -143,9 +378,30 @@ export class PlatformService {
     return config ? new AppServerSidecarLifecycle(config) : undefined;
   }
 
+  private async publishRuntimeBridgeDiscovery(): Promise<void> {
+    try {
+      const hostProfile = this.getHostProfile();
+      const descriptor = await this.runtimeBridge.createDiscoveryDescriptor({
+        hostKind: hostProfile.hostKind,
+        hostVersion: hostProfile.hostVersion,
+      });
+      writeRuntimeBridgeDiscovery(descriptor);
+    } catch (error) {
+      this.appendEvent({
+        level: 'warning',
+        message: '发布 runtime bridge discovery 失败，外部 Product App 将无法自动连接平台设置。',
+        payload: {
+          error: error instanceof Error ? error.message : 'runtime bridge discovery publish failed',
+          plaintextSecrets: false,
+        },
+      });
+    }
+  }
+
   async getBootstrap(): Promise<PlatformBootstrap> {
     await this.syncCatalog();
     await this.syncControlPlaneProjections();
+    await this.refreshModelProviderProjectionFromAppServer();
     const projections = this.listProjections();
     return {
       hostProfile: this.getHostProfile(),
@@ -174,18 +430,21 @@ export class PlatformService {
 
   async getProjection(appId: string): Promise<DesktopAppProjection> {
     await this.syncCatalog();
+    await this.refreshModelProviderProjectionFromAppServer();
     const catalogApp = this.requireCatalogApp(appId);
     return this.createProjection(catalogApp);
   }
 
   async getReadiness(appId: string): Promise<ReadinessResult> {
     await this.syncCatalog();
+    await this.refreshModelProviderProjectionFromAppServer();
     const catalogApp = this.requireCatalogApp(appId);
     return this.calculateReadiness(catalogApp.manifest);
   }
 
   async installApp(appId: string, options: { packageHash?: string } = {}): Promise<DesktopAppProjection> {
     await this.syncCatalog();
+    await this.refreshModelProviderProjectionFromAppServer();
     const catalogApp = this.requireCatalogApp(appId);
     const installedApps = this.listInstalled();
     const existing = installedApps.find((record) => record.appId === appId);
@@ -496,6 +755,7 @@ export class PlatformService {
       this.childProcesses.delete(appId);
     }
     this.runtimeBridge.close();
+    removeRuntimeBridgeDiscovery();
   }
 
   getModelSettings(): ModelSettings {
@@ -506,15 +766,30 @@ export class PlatformService {
     );
   }
 
+  async getModelSettingsFresh(): Promise<ModelSettings> {
+    await this.refreshModelProviderProjectionFromAppServer();
+    return this.getModelSettings();
+  }
+
   async saveModelSettings(settings: ModelSettings): Promise<ModelSettings> {
+    const transientApiKeys = collectTransientModelProviderApiKeys(settings);
     const sanitizedSettings = applyModelSettingsCredentials(settings, this.credentialBroker);
     const nextSettings: ModelSettings = {
       ...sanitizedSettings,
       version: String(Number(settings.version || '0') + 1),
       updatedAt: nowIso(),
     };
+    const syncRecords = await this.syncModelProvidersToAppServer(nextSettings, transientApiKeys);
+    if (hasTransientModelProviderApiKeys(transientApiKeys)) {
+      for (const providerId of Object.keys(transientApiKeys)) {
+        const record = syncRecords[providerId];
+        if (record?.status !== 'synced' || !record.credentialSyncedAt) {
+          throw new Error(record?.lastError || '模型 API Key 未写入 App Server provider store，设置未保存。');
+        }
+      }
+    }
     this.store.writeModelSettings(nextSettings);
-    await this.syncModelProvidersToAppServer(nextSettings);
+    await this.refreshModelProviderProjectionFromAppServer();
     this.refreshAllProjections();
     this.appendEvent({ level: 'info', message: '模型设置已保存并重新计算 projection。' });
     return this.getModelSettings();
@@ -536,7 +811,10 @@ export class PlatformService {
     return nextSettings;
   }
 
-  private async syncModelProvidersToAppServer(settings: ModelSettings): Promise<void> {
+  private async syncModelProvidersToAppServer(
+    settings: ModelSettings,
+    transientApiKeys: Record<string, string> = {},
+  ): Promise<Record<string, ModelProviderAppServerSyncRecord>> {
     const records = this.store.readModelProviderAppServerSyncRecords();
     if (!this.appServerSidecar && !this.appServerClientProvider?.isConfigured()) {
       const nextRecords = { ...records };
@@ -554,7 +832,7 @@ export class PlatformService {
         };
       }
       this.store.writeModelProviderAppServerSyncRecords(nextRecords);
-      return;
+      return nextRecords;
     }
 
     const nextRecords: Record<string, ModelProviderAppServerSyncRecord> = { ...records };
@@ -570,17 +848,22 @@ export class PlatformService {
         if (!client) {
           throw new Error('App Server JSON-RPC client 未配置。');
         }
-        const apiKey =
+        const previousRecord = records[provider.id];
+        const legacyApiKey =
           authType === 'api-key'
-            ? this.credentialBroker.resolveModelProviderCredential({ providerId: provider.id, authType })
+            ? this.resolveLegacyBrokerMigrationKey(provider.id, authType, previousRecord)
             : undefined;
+        const apiKey = authType === 'api-key' ? transientApiKeys[provider.id] ?? legacyApiKey : undefined;
         const result = await client.syncModelProvider({
           provider,
           settingsVersion: settings.version,
           apiKey,
-          previousSyncRecord: records[provider.id],
+          previousSyncRecord: previousRecord,
         });
         nextRecords[provider.id] = result.record;
+        if (legacyApiKey && result.record.status === 'synced' && result.record.credentialSyncedAt) {
+          this.credentialBroker.deleteModelProviderCredential(provider.id);
+        }
         this.appendEvent({
           level: result.record.status === 'synced' ? 'info' : 'warning',
           message:
@@ -618,6 +901,123 @@ export class PlatformService {
     }
 
     this.store.writeModelProviderAppServerSyncRecords(nextRecords);
+    return nextRecords;
+  }
+
+  private async refreshModelProviderProjectionFromAppServer(): Promise<void> {
+    if (!this.appServerSidecar && !this.appServerClientProvider?.isConfigured()) {
+      return;
+    }
+
+    const client: AppServerJsonRpcClient | undefined =
+      this.appServerSidecar?.getClient() ?? this.appServerClientProvider?.getClient();
+    if (!client) {
+      return;
+    }
+
+    try {
+      const currentSettings = this.store.readModelSettings();
+      await this.syncLegacyBrokerKeysForProjectionRefresh(currentSettings);
+      const projections = await client.listModelProviders({ settingsVersion: currentSettings.version });
+      const records = this.store.readModelProviderAppServerSyncRecords();
+      const recordsByAppServerProviderId = new Map(
+        Object.values(records)
+          .filter((record) => Boolean(record.appServerProviderId))
+          .map((record) => [record.appServerProviderId as string, record]),
+      );
+      const currentById = new Map(currentSettings.providers.map((provider) => [provider.id, provider]));
+      const projectedProviders = projections.map((projection) => {
+        const appServerProviderId = projection.syncRecord.appServerProviderId ?? projection.provider.id;
+        const mappedRecord = recordsByAppServerProviderId.get(appServerProviderId);
+        const desktopProviderId = mappedRecord?.desktopProviderId ?? projection.syncRecord.desktopProviderId;
+        const currentProvider = currentById.get(desktopProviderId);
+        return {
+          ...currentProvider,
+          ...projection.provider,
+          id: desktopProviderId,
+          capabilityKinds: currentProvider?.capabilityKinds ?? projection.provider.capabilityKinds,
+          models: projection.provider.models.length ? projection.provider.models : currentProvider?.models ?? [],
+          apiKey: undefined,
+        };
+      });
+      const nextSettings: ModelSettings = {
+        ...currentSettings,
+        updatedAt: nowIso(),
+        defaultAgentProviderId: resolveProjectedDefaultProviderId(
+          currentSettings.defaultAgentProviderId,
+          projectedProviders,
+        ),
+        defaultTextModelId: resolveProjectedDefaultTextModelId(
+          currentSettings.defaultTextModelId,
+          currentSettings.defaultAgentProviderId,
+          projectedProviders,
+        ),
+        providers: projectedProviders,
+      };
+      this.store.writeModelSettings(applyModelSettingsCredentials(nextSettings, this.credentialBroker));
+
+      const nextRecords = { ...records };
+      for (const projection of projections) {
+        const appServerProviderId = projection.syncRecord.appServerProviderId ?? projection.provider.id;
+        const mappedRecord = recordsByAppServerProviderId.get(appServerProviderId);
+        const desktopProviderId = mappedRecord?.desktopProviderId ?? projection.syncRecord.desktopProviderId;
+        const authType = projection.provider.authType ?? 'api-key';
+        nextRecords[desktopProviderId] = {
+          ...records[desktopProviderId],
+          ...projection.syncRecord,
+          desktopProviderId,
+          appServerProviderId,
+          credentialSyncedAt:
+            records[desktopProviderId]?.credentialSyncedAt ??
+            projection.syncRecord.credentialSyncedAt ??
+            (authType === 'api-key' && projection.provider.apiKeyConfigured ? nowIso() : undefined),
+        };
+      }
+      this.store.writeModelProviderAppServerSyncRecords(nextRecords);
+    } catch (error) {
+      this.appendEvent({
+        level: 'warning',
+        message: '从 App Server provider store 刷新模型设置 projection 失败，继续使用本地非敏感缓存。',
+        payload: {
+          error: error instanceof Error ? error.message : 'App Server provider projection 刷新失败。',
+          plaintextSecrets: false,
+        },
+      });
+    }
+  }
+
+  private async syncLegacyBrokerKeysForProjectionRefresh(settings: ModelSettings): Promise<void> {
+    const records = this.store.readModelProviderAppServerSyncRecords();
+    const providersToMigrate = settings.providers.filter((provider) => {
+      const authType = provider.authType ?? 'api-key';
+      return (
+        provider.enabled &&
+        authType === 'api-key' &&
+        !records[provider.id]?.credentialSyncedAt &&
+        Boolean(this.credentialBroker.resolveModelProviderCredential({ providerId: provider.id, authType }))
+      );
+    });
+    if (!providersToMigrate.length) {
+      return;
+    }
+    await this.syncModelProvidersToAppServer(
+      {
+        ...settings,
+        providers: providersToMigrate,
+      },
+      {},
+    );
+  }
+
+  private resolveLegacyBrokerMigrationKey(
+    providerId: string,
+    authType: 'api-key',
+    previousRecord: ModelProviderAppServerSyncRecord | undefined,
+  ): string | undefined {
+    if (previousRecord?.credentialSyncedAt) {
+      return undefined;
+    }
+    return this.credentialBroker.resolveModelProviderCredential({ providerId, authType });
   }
 
   readProductAppSettings(input: ProductAppSettingsReadInput): ProductAppSettingsRecord {
@@ -1119,6 +1519,7 @@ export class PlatformService {
         'lime.branding',
         'lime.billing',
         'lime.appUpdates',
+        'lime.settings',
         'lime.download',
         'lime.permissions',
         'lime.diagnostics',
@@ -1128,6 +1529,7 @@ export class PlatformService {
       ],
       locale: platformSettings.locale,
       theme: platformSettings.theme,
+      appearance: platformSettings.appearance,
       workspacePath: platformSettings.workspacePath,
     };
   }
@@ -1135,6 +1537,7 @@ export class PlatformService {
   private createHostSnapshot(input: LaunchEntryInput): HostSnapshot {
     const hostProfile = this.getHostProfile();
     const authSession = this.getAuthSession();
+    const modelSettings = this.getModelSettings();
     return {
       hostKind: hostProfile.hostKind,
       hostVersion: hostProfile.hostVersion,
@@ -1142,8 +1545,10 @@ export class PlatformService {
       entryKey: input.entryKey,
       locale: hostProfile.locale,
       theme: hostProfile.theme,
+      appearance: hostProfile.appearance,
       workspacePath: hostProfile.workspacePath,
-      modelSettingsVersion: this.getModelSettings().version,
+      modelSettingsVersion: modelSettings.version,
+      modelSettings: createModelSettingsSnapshot(modelSettings),
       oauthState: authSession.state,
       tenantName: authSession.tenantName,
       accountEmail: authSession.accountEmail,
@@ -1274,7 +1679,10 @@ export class PlatformService {
       return this.getAuthSession();
     }
     if (capability === 'lime.modelSettings') {
-      return this.getModelSettings();
+      if (input.operation === 'save' || input.operation === 'model-settings/save' || input.operation === 'migrate') {
+        return this.saveModelSettings(modelSettingsFromCapabilityInput(this.getModelSettings(), input.input));
+      }
+      return this.getModelSettingsFresh();
     }
     if (capability === 'lime.branding') {
       return this.getOEMProjection();
@@ -1285,6 +1693,12 @@ export class PlatformService {
     if (capability === 'lime.appUpdates') {
       return this.createUpdateState();
     }
+    if (capability === 'lime.settings') {
+      if (input.operation === 'save' || input.operation === 'platform-settings/save') {
+        return this.savePlatformSettings(platformSettingsFromCapabilityInput(this.getPlatformSettings(), input.input));
+      }
+      return this.getPlatformSettings();
+    }
     if (capability === 'lime.diagnostics') {
       return this.getDiagnostics();
     }
@@ -1292,6 +1706,7 @@ export class PlatformService {
       return this.invokeAppStorage(input);
     }
     if (this.isAgentRuntimeCapability(capability)) {
+      await this.refreshModelProviderProjectionFromAppServer();
       return this.appServerRuntime.start(input, {
         modelSettings: this.getModelSettings(),
         workspaceId: this.getPlatformSettings().workspacePath,

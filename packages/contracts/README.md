@@ -45,7 +45,7 @@ const stop = window.limeDesktop.platform.onChanged((event) => {
 
 - agentapp package 的安装、启用、禁用、卸载、更新由宿主负责。
 - Product App 自身安装包更新由产品安装器、Electron updater、Tauri updater 或系统包管理器负责，不复用 agentapp installed catalog。
-- 业务 App 通过 `apps.getRuntimeSnapshot(...)` 读取非敏感 Host Snapshot。
+- 业务 App 通过 `apps.getRuntimeSnapshot(...)` 读取非敏感 Host Snapshot，并把 `theme` 与 `appearance` 投影到自身壳层样式；不要再维护第二套基础外观设置事实源。
 - Host Snapshot 可以包含 `tenantName` 和 `accountEmail` 这类账号展示投影，但不得包含 token、refresh token、secret 或 billing 原始账本。
 - `referenceRuntime` / runtime-backed fixture 只消费 `RuntimeBridgeDescriptor`，不直接访问 Electron、Node 或平台内部服务。
 - `devRuntime` 是早期 smoke fixture 的兼容 alias，新 catalog metadata 必须使用 `referenceRuntime`。
@@ -57,6 +57,6 @@ const stop = window.limeDesktop.platform.onChanged((event) => {
 - Agent Runtime 只允许通过 current `lime.agent` capability 调用；`lime.agentExecution` 仅是 compat alias。业务 App 不直接 import Pi agent、Claude SDK 或平台内部 session manager。
 - 模型设置由平台设置中心保存，但执行时通过 Desktop Host 解析成 host-mediated `AgentRuntimeContext` / `AgentRuntimeModelProfile` 交给 Lime App Server JSON-RPC / RuntimeCore；业务 App 不直接传 provider 配置、billing、OAuth 或平台设置副本。
 - `AgentRuntimeModelProfile` 只包含非敏感 provider/model 投影：`settingsVersion`、provider id / protocol / authType / baseUrl / useResponsesApi / capabilityKinds、modelId / requestedModelId、capability 和凭证配置状态。
-- 密钥只允许通过 `credentialRef` 表达，resolver 固定为 `desktop-host-credential-broker`。当前 Desktop Host 已有最小本地 Credential Broker，能把设置页输入的 API Key / OAuth secret 从普通 `ModelSettings` JSON 中剔除并加密保存；JSON-RPC payload 仍只传 configured/ref 形状，后续 live provider 执行需要接入 App Server 自身 `modelProvider*` 数据源或 host credential resolver，不能把明文 API Key、OAuth token、refresh token 或 secret 放进 `AgentRuntimeContext`、Host Snapshot、Product App 设置、runtime event 或 turn payload。
+- 密钥只允许通过 `credentialRef` 表达，current resolver 是 `app-server-provider-store`；`desktop-host-credential-broker` 仅作为旧凭证迁移源或未完成 App Server provisioning 时的诊断状态。设置页输入的 API Key 只能作为 `settings.saveModel` 瞬时字段转交 App Server `modelProviderKey/create`，不能写入普通 `ModelSettings` JSON、Host Snapshot、Product App 设置、runtime event 或 turn payload。
 - `AgentRuntimeResult` 当前允许返回 `blocked` / `needs-setup`，用于表达 App Server client 尚未连接、模型未配置或 entitlement 不满足；调用方不得把 blocked 伪装成成功。
 - App Server client 未配置、未连接或握手失败时，fail-closed `blocked` result 仍携带同一份非敏感 `runtimeContext`，用于证明 JSON-RPC handoff 形状稳定。

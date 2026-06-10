@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { ReactElement } from 'react';
+import type { CSSProperties, ReactElement } from 'react';
 import type {
   BillingSnapshot,
   LaunchEntryResult,
@@ -9,6 +9,7 @@ import type {
   PlatformNavigationIntent,
   PlatformSettings,
   ProductAppSettingsRecord,
+  ThemeMode,
 } from '../../shared/types';
 import {
   getAccountProjectionFromBootstrap,
@@ -51,6 +52,7 @@ export function App(): ReactElement {
   const [loginEmail, setLoginEmail] = useState('dev@limecloud.local');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPage, setSettingsPage] = useState<PlatformSettingsPageKey>('general');
+  const [systemTheme, setSystemTheme] = useState<'light' | 'dark'>('light');
 
   async function refresh(nextToast?: ToastState): Promise<PlatformBootstrap> {
     const nextBootstrap = await window.limeDesktop.platform.getBootstrap();
@@ -88,6 +90,14 @@ export function App(): ReactElement {
       }
       setSelectedAppId((current) => current ?? event.bootstrap.catalog[0]?.manifest.appId);
     });
+  }, []);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const syncSystemTheme = () => setSystemTheme(mediaQuery.matches ? 'dark' : 'light');
+    syncSystemTheme();
+    mediaQuery.addEventListener('change', syncSystemTheme);
+    return () => mediaQuery.removeEventListener('change', syncSystemTheme);
   }, []);
 
   const actions = useMemo<PlatformModuleActionHandlers>(
@@ -176,7 +186,14 @@ export function App(): ReactElement {
   }
 
   return (
-    <main className="app-shell">
+    <main
+      className="app-shell"
+      data-theme={resolveTheme(bootstrap.platformSettings.theme, systemTheme)}
+      data-color={bootstrap.platformSettings.appearance.colorTheme}
+      style={{
+        '--platform-font-scale': bootstrap.platformSettings.appearance.fontScale,
+      } as CSSProperties}
+    >
       <header className="topbar">
         <div className="brand-lockup">
           <div className="brand-mark">{bootstrap.oemProjection.logoText}</div>
@@ -272,6 +289,7 @@ export function App(): ReactElement {
           account={getAccountProjectionFromBootstrap(bootstrap)}
           activePage={settingsPage}
           modelSettings={getModelSettingsProjectionFromBootstrap(bootstrap)}
+          platformSettings={bootstrap.platformSettings}
           productSettings={createReferenceProductSettingsExtensions({
             selectedAppId,
             bootstrap,
@@ -289,6 +307,10 @@ export function App(): ReactElement {
           })}
           onClose={() => setSettingsOpen(false)}
           onSaveModelSettings={(settings) => actions.saveModelSettings(settings)}
+          onPreviewPlatformSettings={(settings) =>
+            setBootstrap((current) => current ? { ...current, platformSettings: settings } : current)
+          }
+          onSavePlatformSettings={(settings) => actions.savePlatformSettings(settings)}
           onOpenPlatformIntent={(intent) => actions.openPlatformIntent?.(intent)}
           onSelectPage={setSettingsPage}
         />
@@ -383,4 +405,8 @@ function intentToModule(target: PlatformNavigationIntent['target']): PlatformMod
     runtime: 'runtime',
   };
   return targets[target];
+}
+
+function resolveTheme(theme: ThemeMode, systemTheme: 'light' | 'dark'): 'light' | 'dark' {
+  return theme === 'system' ? systemTheme : theme;
 }

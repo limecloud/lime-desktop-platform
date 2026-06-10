@@ -103,7 +103,7 @@ test('CredentialBroker 只暴露非敏感凭证状态和 rotation readiness', ()
   }
 });
 
-test('applyModelSettingsCredentials 写入 broker 并从普通 ModelSettings 剔除 apiKey', () => {
+test('applyModelSettingsCredentials 只剔除 apiKey，不再把新 key 写入 broker', () => {
   const root = createTempDir();
   try {
     const broker = new CredentialBroker(root);
@@ -112,11 +112,11 @@ test('applyModelSettingsCredentials 写入 broker 并从普通 ModelSettings 剔
     const local = sanitized.providers.find((item) => item.id === 'local');
 
     assert.equal(provider?.apiKey, undefined);
-    assert.equal(provider?.apiKeyConfigured, true);
+    assert.equal(provider?.apiKeyConfigured, false);
     assert.equal(local?.apiKeyConfigured, true);
     assert.equal(
       broker.resolveModelProviderCredential({ providerId: 'openai-compatible', authType: 'api-key' }),
-      'sk-test-secret',
+      undefined,
     );
 
     const projected = projectModelSettingsCredentialState(
@@ -128,14 +128,14 @@ test('applyModelSettingsCredentials 写入 broker 并从普通 ModelSettings 剔
       },
       broker,
     );
-    assert.equal(projected.providers.find((item) => item.id === 'openai-compatible')?.apiKeyConfigured, true);
+    assert.equal(projected.providers.find((item) => item.id === 'openai-compatible')?.apiKeyConfigured, false);
     assert.equal(JSON.stringify(projected).includes('sk-test-secret'), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('apiKeyConfigured 以 broker 为事实源，不信任普通 JSON 中的陈旧标记', () => {
+test('legacy broker projection 不信任普通 JSON 中的陈旧 apiKeyConfigured 标记', () => {
   const root = createTempDir();
   try {
     const broker = new CredentialBroker(root);

@@ -53,7 +53,7 @@ async function createService(root: string) {
     version: '0.1.4-test',
   });
   const { PlatformService } = await import('../../src/main/services/platformService');
-  return withoutControlPlaneEnv(() => new PlatformService());
+  return withoutControlPlaneEnv(() => new PlatformService(undefined, { publishRuntimeBridgeDiscovery: false }));
 }
 
 async function createServiceWithClient(root: string, client: Partial<AppServerJsonRpcClient>) {
@@ -65,11 +65,14 @@ async function createServiceWithClient(root: string, client: Partial<AppServerJs
   const { PlatformService } = await import('../../src/main/services/platformService');
   return withoutControlPlaneEnv(
     () =>
-      new PlatformService({
-        getClient: () => client as AppServerJsonRpcClient,
-        isConnected: () => Boolean(client.connected),
-        isConfigured: () => true,
-      }),
+      new PlatformService(
+        {
+          getClient: () => client as AppServerJsonRpcClient,
+          isConnected: () => Boolean(client.connected),
+          isConfigured: () => true,
+        },
+        { publishRuntimeBridgeDiscovery: false },
+      ),
   );
 }
 
@@ -78,20 +81,37 @@ function enableLocalModel(settings: ModelSettings): ModelSettings {
     ...settings,
     defaultAgentProviderId: 'local',
     defaultTextModelId: 'local-default',
-    providers: settings.providers.map((provider) =>
-      provider.id === 'local'
-        ? {
-            ...provider,
-            enabled: true,
-            authType: 'none',
-            apiKeyConfigured: true,
-          }
-        : provider,
-    ),
+    providers: [
+      {
+        id: 'local',
+        displayName: 'Local Runtime',
+        protocol: 'local',
+        capabilityKinds: ['text'],
+        enabled: true,
+        apiKeyConfigured: true,
+        authType: 'none',
+        models: ['local-default'],
+      },
+    ],
   };
 }
 
-test('PlatformService 保存 provider 设置时把 API Key 写入 broker，普通设置和诊断不含明文', async () => {
+function openAiProvider(overrides: Partial<ModelSettings['providers'][number]> = {}): ModelSettings['providers'][number] {
+  return {
+    id: 'openai-compatible',
+    displayName: 'OpenAI Compatible',
+    protocol: 'openai-compatible',
+    capabilityKinds: ['text', 'image'],
+    enabled: true,
+    apiKeyConfigured: false,
+    authType: 'api-key',
+    useResponsesApi: true,
+    models: ['gpt-4.1-mini', 'gpt-4.1', 'o4-mini'],
+    ...overrides,
+  };
+}
+
+test('PlatformService 离线保存新 provider API Key 时 fail-closed 且不持久化明文', async () => {
   const root = createTempRoot();
   try {
     const service = await createService(root);
@@ -100,34 +120,24 @@ test('PlatformService 保存 provider 设置时把 API Key 写入 broker，普�
       ...current,
       defaultAgentProviderId: 'openai-compatible',
       defaultTextModelId: 'gpt-4.1-mini',
-      providers: current.providers.map((provider) =>
-        provider.id === 'openai-compatible'
-          ? {
-              ...provider,
-              enabled: true,
-              apiKeyConfigured: false,
-              apiKey: 'sk-unit-secret',
-              authType: 'api-key',
-            }
-          : provider,
-      ),
+      providers: [openAiProvider({ apiKey: 'sk-unit-secret' })],
     };
 
-    const saved = await service.saveModelSettings(nextSettings);
-    const savedProvider = saved.providers.find((provider) => provider.id === 'openai-compatible');
-    assert.equal(savedProvider?.apiKey, undefined);
-    assert.equal(savedProvider?.apiKeyConfigured, true);
+    await assert.rejects(
+      () => service.saveModelSettings(nextSettings),
+      /App Server JSON-RPC sidecar 未配置。|模型 API Key 未写入 App Server provider store/,
+    );
 
     const userStateDir = join(root, 'userData', 'state');
-    const persistedSettings = readFileSync(join(userStateDir, 'model-settings.json'), 'utf8');
-    assert.equal(persistedSettings.includes('sk-unit-secret'), false);
-    assert.equal(persistedSettings.includes('"apiKey"'), false);
+    const persistedSettingsPath = join(userStateDir, 'model-settings.json');
+    if (existsSync(persistedSettingsPath)) {
+      const persistedSettings = readFileSync(persistedSettingsPath, 'utf8');
+      assert.equal(persistedSettings.includes('sk-unit-secret'), false);
+      assert.equal(persistedSettings.includes('"apiKey"'), false);
+    }
 
     const brokerPath = join(userStateDir, 'credential-broker', 'model-providers', 'openai-compatible.json');
-    assert.equal(existsSync(brokerPath), true);
-    const persistedCredential = readFileSync(brokerPath, 'utf8');
-    assert.equal(persistedCredential.includes('sk-unit-secret'), false);
-    assert.equal(persistedCredential.includes('apiKey'), false);
+    assert.equal(existsSync(brokerPath), false);
 
     const syncStatePath = join(userStateDir, 'model-provider-app-server-sync.json');
     assert.equal(existsSync(syncStatePath), true);
@@ -138,11 +148,10 @@ test('PlatformService 保存 provider 设置时把 API Key 写入 broker，普�
     assert.equal(persistedSyncState.includes('App Server JSON-RPC sidecar 未配置。'), true);
 
     const projected = service.getModelSettings().providers.find((provider) => provider.id === 'openai-compatible');
-    assert.equal(projected?.apiKey, undefined);
-    assert.equal(projected?.apiKeyConfigured, true);
+    assert.equal(projected, undefined);
     const diagnosticsText = JSON.stringify(service.getDiagnostics());
     assert.equal(diagnosticsText.includes('sk-unit-secret'), false);
-    assert.equal(diagnosticsText.includes('App Server JSON-RPC sidecar 未配置。'), true);
+    assert.equal(diagnosticsText.includes('App Server JSON-RPC sidecar 未配置。'), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -167,6 +176,92 @@ test('PlatformService 在共享设置满足后可把中性 fixture 投影为应�
       ],
     );
     assert.equal(service.listInstalled().find((record) => record.appId === 'lime.platform.conformance')?.status, 'ready');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('PlatformService launchEntry Host Snapshot 投影非敏感模型 metadata', async () => {
+  const root = createTempRoot();
+  try {
+    const service = await createService(root);
+    await service.saveModelSettings(enableLocalModel(service.getModelSettings()));
+    await service.login({ tenantName: '测试租户', accountEmail: 'tester@example.test' });
+    await service.refreshBilling();
+    await service.installApp('lime.platform.conformance');
+
+    const result = await service.launchEntry({
+      appId: 'lime.platform.conformance',
+      entryKey: 'host-conformance',
+    });
+
+    assert.equal(result.launched, true);
+    assert.equal(result.snapshot?.modelSettingsVersion, result.snapshot?.modelSettings?.version);
+    assert.equal(result.snapshot?.modelSettings?.defaultAgentProviderId, 'local');
+    assert.equal(result.snapshot?.modelSettings?.defaultTextModelId, 'local-default');
+    assert.deepEqual(result.snapshot?.modelSettings?.providers.map((provider) => provider.id), ['local']);
+    assert.equal(result.snapshot?.modelSettings?.providers[0]?.apiKeyConfigured, true);
+
+    const serializedSnapshot = JSON.stringify(result.snapshot);
+    assert.equal(serializedSnapshot.includes('"apiKey"'), false);
+    assert.equal(serializedSnapshot.includes('token'), false);
+    assert.equal(serializedSnapshot.includes('secret'), false);
+    assert.equal(serializedSnapshot.includes('credential'), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('PlatformService 通过 lime.settings capability 保存外观设置并归一化非法输入', async () => {
+  const root = createTempRoot();
+  try {
+    const service = await createService(root);
+    const result = await service.invokeCapability({
+      appId: 'product.app',
+      entryKey: 'main',
+      capability: 'lime.settings',
+      operation: 'platform-settings/save',
+      input: {
+        settings: {
+          theme: 'dark',
+          appearance: {
+            colorTheme: 'ocean',
+            fontScale: 1.8,
+            serifEnabled: true,
+          },
+        },
+      },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(service.getPlatformSettings().theme, 'dark');
+    assert.deepEqual(service.getPlatformSettings().appearance, {
+      colorTheme: 'ocean',
+      fontScale: 1.25,
+      serifEnabled: true,
+    });
+
+    await service.invokeCapability({
+      appId: 'product.app',
+      entryKey: 'main',
+      capability: 'lime.settings',
+      operation: 'platform-settings/save',
+      input: {
+        settings: {
+          appearance: {
+            colorTheme: 'invalid-theme',
+            fontScale: Number.NaN,
+            serifEnabled: 'yes',
+          },
+        },
+      },
+    });
+
+    assert.deepEqual(service.getPlatformSettings().appearance, {
+      colorTheme: 'ocean',
+      fontScale: 1.25,
+      serifEnabled: true,
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -227,19 +322,12 @@ test('PlatformService 保存模型设置时受控同步 App Server provider/key�
       ...current,
       defaultAgentProviderId: 'openai-compatible',
       defaultTextModelId: 'gpt-4.1-mini',
-      providers: current.providers.map((provider) =>
-        provider.id === 'openai-compatible'
-          ? {
-              ...provider,
-              enabled: true,
-              apiKeyConfigured: false,
-              apiKey: 'sk-provider-sync-secret',
-              authType: 'api-key',
-              baseUrl: 'https://models.example.test/v1',
-              useResponsesApi: true,
-            }
-          : provider,
-      ),
+      providers: [
+        openAiProvider({
+          apiKey: 'sk-provider-sync-secret',
+          baseUrl: 'https://models.example.test/v1',
+        }),
+      ],
     });
 
     assert.equal(syncCalls.length, 1);
@@ -274,6 +362,332 @@ test('PlatformService 保存模型设置时受控同步 App Server provider/key�
     assert.equal(serializedStart.includes('custom-provider-1'), true);
     assert.equal(serializedStart.includes('sk-provider-sync-secret'), false);
     assert.equal(serializedStart.includes('"apiKey"'), false);
+
+    await service.saveModelSettings({
+      ...saved,
+      providers: saved.providers.map((provider) =>
+        provider.id === 'openai-compatible'
+          ? {
+              ...provider,
+              displayName: 'OpenAI Compatible Updated',
+              apiKey: undefined,
+            }
+          : provider,
+      ),
+    });
+
+    assert.equal(syncCalls.length, 2);
+    assert.deepEqual(syncCalls[1], {
+      providerId: 'openai-compatible',
+      apiKey: undefined,
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('PlatformService 仅在缺少 App Server credential marker 时从旧 broker 迁移一次 provider key', async () => {
+  const root = createTempRoot();
+  try {
+    const syncCalls: Array<{ providerId: string; apiKey?: string }> = [];
+    const client: Partial<AppServerJsonRpcClient> = {
+      connected: true,
+      syncModelProvider: async (input) => {
+        syncCalls.push({
+          providerId: input.provider.id,
+          apiKey: input.apiKey,
+        });
+        return {
+          created: false,
+          updated: true,
+          credentialSynced: Boolean(input.apiKey),
+          record: {
+            desktopProviderId: input.provider.id,
+            status: 'synced',
+            appServerProviderId: 'custom-provider-legacy',
+            appServerProviderType: 'openai-response',
+            appServerProviderName: input.provider.displayName,
+            apiHost: input.provider.baseUrl,
+            settingsVersion: input.settingsVersion,
+            syncedAt: '2026-06-09T00:00:00.000Z',
+            credentialSyncedAt: input.apiKey ? '2026-06-09T00:00:00.000Z' : input.previousSyncRecord?.credentialSyncedAt,
+            plaintextSecrets: false,
+          },
+        };
+      },
+    };
+    const service = await createServiceWithClient(root, client);
+    const { CredentialBroker } = await import('../../src/main/services/credentialBroker');
+    const broker = new CredentialBroker(join(root, 'userData', 'state', 'credential-broker'));
+    broker.writeModelProviderCredential({
+      providerId: 'openai-compatible',
+      authType: 'api-key',
+      value: 'sk-legacy-broker-secret',
+    });
+    const current = service.getModelSettings();
+    const nextSettings: ModelSettings = {
+      ...current,
+      defaultAgentProviderId: 'openai-compatible',
+      defaultTextModelId: 'gpt-4.1-mini',
+      providers: [
+        openAiProvider({
+          apiKeyConfigured: true,
+          baseUrl: 'https://models.example.test/v1',
+        }),
+      ],
+    };
+
+    const migrated = await service.saveModelSettings(nextSettings);
+    assert.equal(JSON.stringify(migrated).includes('sk-legacy-broker-secret'), false);
+    assert.deepEqual(syncCalls[0], {
+      providerId: 'openai-compatible',
+      apiKey: 'sk-legacy-broker-secret',
+    });
+    assert.equal(
+      broker.resolveModelProviderCredential({ providerId: 'openai-compatible', authType: 'api-key' }),
+      undefined,
+    );
+
+    await service.saveModelSettings({
+      ...migrated,
+      providers: migrated.providers.map((provider) =>
+        provider.id === 'openai-compatible'
+          ? {
+              ...provider,
+              displayName: 'OpenAI Compatible Migrated',
+            }
+          : provider,
+      ),
+    });
+
+    assert.deepEqual(syncCalls[1], {
+      providerId: 'openai-compatible',
+      apiKey: undefined,
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('PlatformService 读取模型设置时优先刷新 App Server provider projection', async () => {
+  const root = createTempRoot();
+  try {
+    let listCalls = 0;
+    const client: Partial<AppServerJsonRpcClient> = {
+      connected: true,
+      listModelProviders: async () => {
+        listCalls += 1;
+        return [
+          {
+            provider: {
+              id: 'custom-provider-1',
+              displayName: 'App Server OpenAI',
+              protocol: 'openai-compatible',
+              capabilityKinds: ['text'],
+              enabled: true,
+              apiKeyConfigured: true,
+              authType: 'api-key',
+              baseUrl: 'https://models.example.test/v1',
+              useResponsesApi: true,
+              models: ['gpt-4.1-mini'],
+            },
+            syncRecord: {
+              desktopProviderId: 'custom-provider-1',
+              status: 'synced',
+              appServerProviderId: 'custom-provider-1',
+              appServerProviderType: 'openai-response',
+              appServerProviderName: 'App Server OpenAI',
+              apiHost: 'https://models.example.test/v1',
+              settingsVersion: '1',
+              syncedAt: '2026-06-09T00:00:00.000Z',
+              credentialSyncedAt: '2026-06-09T00:00:00.000Z',
+              plaintextSecrets: false,
+            },
+          },
+        ];
+      },
+    };
+    const service = await createServiceWithClient(root, client);
+
+    const settings = await service.getModelSettingsFresh();
+    assert.equal(listCalls, 1);
+    const provider = settings.providers.find((item) => item.id === 'custom-provider-1');
+    assert.equal(provider?.displayName, 'App Server OpenAI');
+    assert.equal(provider?.apiKeyConfigured, true);
+    assert.equal(provider?.apiKey, undefined);
+
+    const persistedSettings = readFileSync(join(root, 'userData', 'state', 'model-settings.json'), 'utf8');
+    assert.equal(persistedSettings.includes('custom-provider-1'), true);
+    assert.equal(persistedSettings.includes('"apiKey"'), false);
+    const credentialState = service
+      .getDiagnostics()
+      .appServerRuntime.modelProvider.enabledProviders.find((item) => item.id === 'custom-provider-1')
+      ?.credentialState;
+    assert.equal(credentialState?.storageKind, 'app-server-provider-store');
+    assert.equal(credentialState?.runtimeStatus, 'app-server-provider-ready');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('PlatformService 在 App Server provider store 为空时不回退本地 provider 列表', async () => {
+  const root = createTempRoot();
+  try {
+    const client: Partial<AppServerJsonRpcClient> = {
+      connected: true,
+      listModelProviders: async () => [],
+    };
+    const service = await createServiceWithClient(root, client);
+    const settings = await service.getModelSettingsFresh();
+
+    assert.deepEqual(settings.providers, []);
+    assert.equal(settings.defaultAgentProviderId, undefined);
+    assert.equal(settings.defaultTextModelId, undefined);
+    assert.equal(service.getDiagnostics().appServerRuntime.readiness.state, 'needs-setup');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('PlatformService 刷新 App Server provider projection 时不为缺失模型的 provider 注入默认模型', async () => {
+  const root = createTempRoot();
+  try {
+    const client: Partial<AppServerJsonRpcClient> = {
+      connected: true,
+      listModelProviders: async () => [
+        {
+          provider: {
+            id: 'provider-without-models',
+            displayName: 'Provider Without Models',
+            protocol: 'openai-compatible',
+            capabilityKinds: ['text'],
+            enabled: true,
+            apiKeyConfigured: true,
+            authType: 'api-key',
+            baseUrl: 'https://models.example.test/v1',
+            useResponsesApi: true,
+            models: [],
+          },
+          syncRecord: {
+            desktopProviderId: 'provider-without-models',
+            status: 'synced',
+            appServerProviderId: 'provider-without-models',
+            appServerProviderType: 'openai-response',
+            appServerProviderName: 'Provider Without Models',
+            apiHost: 'https://models.example.test/v1',
+            settingsVersion: '1',
+            syncedAt: '2026-06-09T00:00:00.000Z',
+            credentialSyncedAt: '2026-06-09T00:00:00.000Z',
+            plaintextSecrets: false,
+          },
+        },
+      ],
+    };
+    const service = await createServiceWithClient(root, client);
+
+    const settings = await service.getModelSettingsFresh();
+    assert.equal(settings.providers.length, 1);
+    assert.deepEqual(settings.providers[0]?.models, []);
+    assert.equal(settings.defaultTextModelId, undefined);
+    assert.equal(service.getDiagnostics().appServerRuntime.readiness.state, 'needs-setup');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('PlatformService 刷新 provider projection 时会迁移旧 broker key 且不重复迁移', async () => {
+  const root = createTempRoot();
+  try {
+    const syncCalls: Array<{ providerId: string; apiKey?: string }> = [];
+    const client: Partial<AppServerJsonRpcClient> = {
+      connected: true,
+      syncModelProvider: async (input) => {
+        syncCalls.push({ providerId: input.provider.id, apiKey: input.apiKey });
+        return {
+          created: false,
+          updated: true,
+          credentialSynced: Boolean(input.apiKey),
+          record: {
+            desktopProviderId: input.provider.id,
+            status: 'synced',
+            appServerProviderId: 'openai-compatible',
+            appServerProviderType: 'openai-response',
+            appServerProviderName: input.provider.displayName,
+            apiHost: input.provider.baseUrl,
+            settingsVersion: input.settingsVersion,
+            syncedAt: '2026-06-09T00:00:00.000Z',
+            credentialSyncedAt: input.apiKey ? '2026-06-09T00:00:00.000Z' : input.previousSyncRecord?.credentialSyncedAt,
+            plaintextSecrets: false,
+          },
+        };
+      },
+      listModelProviders: async () => [
+        {
+          provider: {
+            id: 'openai-compatible',
+            displayName: 'OpenAI Compatible',
+            protocol: 'openai-compatible',
+            capabilityKinds: ['text'],
+            enabled: true,
+            apiKeyConfigured: true,
+            authType: 'api-key',
+            baseUrl: 'https://models.example.test/v1',
+            useResponsesApi: true,
+            models: ['gpt-4.1-mini'],
+          },
+          syncRecord: {
+            desktopProviderId: 'openai-compatible',
+            status: 'synced',
+            appServerProviderId: 'openai-compatible',
+            appServerProviderType: 'openai-response',
+            appServerProviderName: 'OpenAI Compatible',
+            apiHost: 'https://models.example.test/v1',
+            settingsVersion: '1',
+            syncedAt: '2026-06-09T00:00:00.000Z',
+            credentialSyncedAt: undefined,
+            plaintextSecrets: false,
+          },
+        },
+      ],
+    };
+    const offlineService = await createService(root);
+    const current = offlineService.getModelSettings();
+    await offlineService.saveModelSettings({
+      ...current,
+      defaultAgentProviderId: 'openai-compatible',
+      defaultTextModelId: 'gpt-4.1-mini',
+      providers: [
+        openAiProvider({
+          apiKeyConfigured: true,
+          baseUrl: 'https://models.example.test/v1',
+        }),
+      ],
+    });
+
+    const { CredentialBroker } = await import('../../src/main/services/credentialBroker');
+    const broker = new CredentialBroker(join(root, 'userData', 'state', 'credential-broker'));
+    broker.writeModelProviderCredential({
+      providerId: 'openai-compatible',
+      authType: 'api-key',
+      value: 'sk-legacy-refresh-secret',
+    });
+
+    const service = await createServiceWithClient(root, client);
+    await service.getModelSettingsFresh();
+    await service.getModelSettingsFresh();
+
+    assert.deepEqual(syncCalls, [
+      {
+        providerId: 'openai-compatible',
+        apiKey: 'sk-legacy-refresh-secret',
+      },
+    ]);
+    assert.equal(
+      broker.resolveModelProviderCredential({ providerId: 'openai-compatible', authType: 'api-key' }),
+      undefined,
+    );
+    const syncState = readFileSync(join(root, 'userData', 'state', 'model-provider-app-server-sync.json'), 'utf8');
+    assert.equal(syncState.includes('sk-legacy-refresh-secret'), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -330,7 +744,7 @@ test('PlatformService 通过 lime.storage capability 读写业务文档，并在
             value: { token: 'should-not-persist' },
           },
         }),
-      /Credential Broker/,
+      /平台凭证边界/,
     );
     await assert.rejects(
       () =>
