@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -74,6 +74,68 @@ async function createServiceWithClient(root: string, client: Partial<AppServerJs
         { publishRuntimeBridgeDiscovery: false },
       ),
   );
+}
+
+async function createServiceWithSidecarEnv(root: string, env: Partial<NodeJS.ProcessEnv>) {
+  configureElectronMock({
+    userData: join(root, 'userData'),
+    appPath: process.cwd(),
+    version: '0.1.4-test',
+  });
+  const keys = ['APP_SERVER_BIN', 'APP_SERVER_ARGS', 'APP_SERVER_CWD', 'APP_SERVER_RESOURCE_DIR'];
+  const previous = new Map(keys.map((key) => [key, process.env[key]]));
+  for (const key of keys) {
+    delete process.env[key];
+  }
+  Object.assign(process.env, env);
+
+  try {
+    const { PlatformService } = await import('../../src/main/services/platformService');
+    return new PlatformService(undefined, { publishRuntimeBridgeDiscovery: false });
+  } finally {
+    for (const key of keys) {
+      const value = previous.get(key);
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+function createJsonRpcSidecarFixture(root: string): string {
+  const fixturePath = join(root, 'app-server-fixture.cjs');
+  writeFileSync(
+    fixturePath,
+    `
+const readline = require('node:readline');
+const reader = readline.createInterface({ input: process.stdin });
+reader.on('line', (line) => {
+  if (!line.trim()) return;
+  const envelope = JSON.parse(line);
+  if (typeof envelope.id !== 'number') return;
+  if (envelope.method === 'initialize') {
+    console.log(JSON.stringify({
+      id: envelope.id,
+      result: {
+        serverInfo: { name: 'app-server-fixture', version: '0.0.0', protocolVersion: 'appserver.v0' },
+        capabilities: { agentSession: true, providerStore: true }
+      }
+    }));
+  }
+});
+`,
+    'utf8',
+  );
+  const binaryPath = join(root, process.platform === 'win32' ? 'app-server.cmd' : 'app-server');
+  const binaryContent =
+    process.platform === 'win32'
+      ? `@echo off\r\n"${process.execPath}" "${fixturePath}" %*\r\n`
+      : `#!/bin/sh\nexec "${process.execPath}" "${fixturePath}" "$@"\n`;
+  writeFileSync(binaryPath, binaryContent, 'utf8');
+  chmodSync(binaryPath, 0o755);
+  return binaryPath;
 }
 
 function enableLocalModel(settings: ModelSettings): ModelSettings {
@@ -153,6 +215,29 @@ test('PlatformService 离线保存新 provider API Key 时 fail-closed 且不持
     assert.equal(diagnosticsText.includes('sk-unit-secret'), false);
     assert.equal(diagnosticsText.includes('App Server JSON-RPC sidecar 未配置。'), false);
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('PlatformService 启动期会预热自管理 App Server sidecar 并发送 initialize', async () => {
+  const root = createTempRoot();
+  let service: Awaited<ReturnType<typeof createServiceWithSidecarEnv>> | undefined;
+  try {
+    const fixturePath = createJsonRpcSidecarFixture(root);
+    service = await createServiceWithSidecarEnv(root, {
+      APP_SERVER_BIN: fixturePath,
+      APP_SERVER_ARGS: '--backend runtime',
+    });
+
+    const status = await service.warmupAppServerSidecar();
+
+    assert.deepEqual(status, { ok: true, connected: true });
+    assert.equal(
+      service.getDiagnostics().lastEvents.some((event) => event.message === 'Lime App Server sidecar 已随 Electron 启动。'),
+      true,
+    );
+  } finally {
+    service?.shutdownReferenceRuntimeFixtures();
     rmSync(root, { recursive: true, force: true });
   }
 });

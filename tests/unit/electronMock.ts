@@ -2,6 +2,7 @@ import Module from 'node:module';
 
 interface ElectronMockState {
   userData: string;
+  appData: string;
   appPath: string;
   version: string;
 }
@@ -10,6 +11,7 @@ type ModuleLoad = (request: string, parent?: NodeModule, isMain?: boolean) => un
 
 const state: ElectronMockState = {
   userData: '',
+  appData: '',
   appPath: process.cwd(),
   version: '0.0.0-test',
 };
@@ -32,10 +34,13 @@ export function installElectronMock(): void {
       return {
         app: {
           getPath: (name: string) => {
-            if (name !== 'userData') {
-              throw new Error(`electron.app.getPath(${name}) 未在单元测试桩中配置。`);
+            if (name === 'userData') {
+              return state.userData;
             }
-            return state.userData;
+            if (name === 'appData') {
+              return state.appData || state.userData;
+            }
+            throw new Error(`electron.app.getPath(${name}) 未在单元测试桩中配置。`);
           },
           getAppPath: () => state.appPath,
           getVersion: () => state.version,
@@ -47,4 +52,3 @@ export function installElectronMock(): void {
   }) as ModuleLoad;
   installed = true;
 }
-

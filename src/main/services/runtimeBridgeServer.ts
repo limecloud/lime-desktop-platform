@@ -9,6 +9,7 @@ import type {
   PlatformNavigationResult,
   RuntimeBridgeDiscoveryDescriptor,
   RuntimeBridgeDescriptor,
+  AgentRuntimeEvent,
 } from '../../shared/types';
 
 interface RuntimeBridgeSession {
@@ -57,6 +58,13 @@ export class RuntimeBridgeServer {
     private readonly invokeCapability: (input: CapabilityInvokeInput) => CapabilityInvokeResult | Promise<CapabilityInvokeResult>,
     private readonly openNavigationIntent: (input: PlatformNavigationIntent) => PlatformNavigationResult,
     private readonly createSnapshot: (input: { appId: string; entryKey: string }) => HostSnapshot,
+    private readonly readAgentEvents?: (input: {
+      appId: string;
+      entryKey: string;
+      sessionId?: string;
+      turnId?: string;
+      afterSequence?: number;
+    }) => AgentRuntimeEvent[] | Promise<AgentRuntimeEvent[]>,
   ) {}
 
   async createDescriptor(input: { appId: string; entryKey: string; snapshot: HostSnapshot }): Promise<RuntimeBridgeDescriptor> {
@@ -183,6 +191,23 @@ export class RuntimeBridgeServer {
           input: body?.input,
         });
         writeJson(response, 200, { ok: true, result });
+        return;
+      }
+
+      if (request.url === '/agent/events') {
+        if (!this.readAgentEvents) {
+          writeJson(response, 501, { ok: false, error: { code: 'agent-events-unavailable', message: 'runtime bridge 未提供 Agent 事件读取。' } });
+          return;
+        }
+        const body = (await readRequestBody(request)) as Partial<{ sessionId: string; turnId: string; afterSequence: number }> | undefined;
+        const events = await this.readAgentEvents({
+          appId: session.appId,
+          entryKey: session.entryKey,
+          sessionId: typeof body?.sessionId === 'string' ? body.sessionId : undefined,
+          turnId: typeof body?.turnId === 'string' ? body.turnId : undefined,
+          afterSequence: typeof body?.afterSequence === 'number' ? body.afterSequence : undefined,
+        });
+        writeJson(response, 200, { ok: true, result: { events } });
         return;
       }
 

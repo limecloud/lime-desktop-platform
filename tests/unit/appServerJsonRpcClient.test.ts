@@ -15,6 +15,7 @@ import type { AgentRuntimeContext, AgentRuntimeRequest } from '../../src/shared/
 class MemoryTransport implements AppServerJsonRpcTransport {
   readonly written: unknown[] = [];
   private readonly lines = new EventEmitter();
+  private readonly closed = new EventEmitter();
 
   writeLine(line: string): void {
     this.written.push(JSON.parse(line));
@@ -24,10 +25,20 @@ class MemoryTransport implements AppServerJsonRpcTransport {
     this.lines.on('line', listener);
   }
 
-  close(): void {}
+  onClose(listener: (error: Error) => void): void {
+    this.closed.on('close', listener);
+  }
+
+  close(): void {
+    this.closeWithError(new Error('memory transport closed'));
+  }
 
   send(value: unknown): void {
     this.lines.emit('line', JSON.stringify(value));
+  }
+
+  closeWithError(error: Error): void {
+    this.closed.emit('close', error);
   }
 }
 
@@ -186,8 +197,27 @@ test('AppServerJsonRpcClient 按 initialize / initialized / start / turn 顺序�
         sessionId: 'sess_1',
         threadId: 'thread_1',
         turnId: 'turn_1',
-        type: 'turn.completed',
+        type: 'artifact.snapshot',
         timestamp: '2026-06-09T00:00:01.000Z',
+        payload: {
+          title: '测试交付物',
+          content: 'artifact content',
+          token: 'token-leak',
+        },
+      },
+    },
+  });
+  transport.send({
+    method: 'agentSession/event',
+    params: {
+      event: {
+        eventId: 'evt_3',
+        sequence: 3,
+        sessionId: 'sess_1',
+        threadId: 'thread_1',
+        turnId: 'turn_1',
+        type: 'turn.completed',
+        timestamp: '2026-06-09T00:00:02.000Z',
         payload: {
           status: 'completed',
           token: 'token-leak',
@@ -210,7 +240,7 @@ test('AppServerJsonRpcClient 按 initialize / initialized / start / turn 顺序�
   const run = await runPromise;
   assert.equal(run.session.sessionId, 'sess_1');
   assert.equal(run.turn.turnId, 'turn_1');
-  assert.equal(run.events.length, 2);
+  assert.equal(run.events.length, 3);
   assert.equal(run.events[0]?.type, 'message.delta');
   assert.deepEqual(run.events[0]?.payload, {
     text: 'delta',
@@ -219,11 +249,70 @@ test('AppServerJsonRpcClient 按 initialize / initialized / start / turn 顺序�
     credentialRef: { providerId: 'openai-compatible' },
     nested: { refreshToken: '[redacted]' },
   });
-  assert.equal(run.events[1]?.type, 'completed');
+  assert.equal(run.events[1]?.type, 'artifact.snapshot');
   assert.deepEqual(run.events[1]?.payload, {
+    title: '测试交付物',
+    content: 'artifact content',
+    token: '[redacted]',
+  });
+  assert.equal(run.events[2]?.type, 'turn.completed');
+  assert.deepEqual(run.events[2]?.payload, {
     status: 'completed',
     token: '[redacted]',
   });
+});
+
+test('AppServerJsonRpcClient 的 Agent turn/start 使用长超时，不复用短 control-plane 超时', async () => {
+  const transport = new MemoryTransport();
+  const client = new AppServerJsonRpcClient(transport, { requestTimeoutMs: 5 });
+  const runtimeContext = createRuntimeContext();
+  const runPromise = client.startAgentRun({
+    request: createRuntimeRequest(runtimeContext),
+    runtimeContext,
+    workspaceId: '/workspace',
+    locale: 'zh-CN',
+  });
+
+  const initialize = transport.written[0] as { id: number; method: string };
+  transport.send({
+    id: initialize.id,
+    result: {
+      serverInfo: { name: 'app-server', version: '0.1.0', protocolVersion: 'appserver.v0' },
+      capabilities: { agentSession: true },
+    },
+  });
+  await waitForWriteCount(transport, 3);
+
+  const startSession = transport.written[2] as { id: number; method: string };
+  transport.send({
+    id: startSession.id,
+    result: {
+      session: {
+        sessionId: 'sess_slow',
+        threadId: 'thread_slow',
+        appId: 'lime.platform.conformance',
+        status: 'idle',
+      },
+    },
+  });
+  await waitForWriteCount(transport, 4);
+
+  const startTurn = transport.written[3] as { id: number; method: string };
+  assert.equal(startTurn.method, 'agentSession/turn/start');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  transport.send({
+    id: startTurn.id,
+    result: {
+      turn: {
+        turnId: 'turn_slow',
+        sessionId: 'sess_slow',
+        status: 'running',
+      },
+    },
+  });
+
+  const result = await runPromise;
+  assert.equal(result.turn.turnId, 'turn_slow');
 });
 
 test('AppServerJsonRpcClient 保存路径受控同步 provider/key，并记录 App Server provider id', async () => {
@@ -490,6 +579,33 @@ test('AppServerJsonRpcClient 只投影 App Server 显式模型，不按 provider
   assert.equal(JSON.stringify(projections).includes('o4-mini'), false);
 });
 
+test('AppServerJsonRpcClient 请求超时时拒绝 pending，避免平台 bootstrap 永久挂起', async () => {
+  const transport = new MemoryTransport();
+  const client = new AppServerJsonRpcClient(transport, { requestTimeoutMs: 5 });
+  const listPromise = assert.rejects(
+    client.listModelProviders({ settingsVersion: 'settings-timeout' }),
+    /App Server JSON-RPC 请求超时：method=initialize/,
+  );
+
+  await waitForWriteCount(transport, 1);
+  await listPromise;
+  assert.equal(client.connected, true);
+});
+
+test('AppServerJsonRpcClient transport 关闭时拒绝 pending 并进入断开状态', async () => {
+  const transport = new MemoryTransport();
+  const client = new AppServerJsonRpcClient(transport, { requestTimeoutMs: 1000 });
+  const listPromise = assert.rejects(
+    client.listModelProviders({ settingsVersion: 'settings-close' }),
+    /sidecar exited/,
+  );
+
+  await waitForWriteCount(transport, 1);
+  transport.closeWithError(new Error('sidecar exited'));
+  await listPromise;
+  assert.equal(client.connected, false);
+});
+
 test('resolveAppServerSidecarLaunchConfig 只在 APP_SERVER_BIN 配置时启用 stdio sidecar', () => {
   assert.equal(resolveAppServerSidecarLaunchConfig({}), undefined);
 
@@ -546,6 +662,27 @@ test('resolveAppServerSidecarLaunchConfig 在 APP_SERVER_ARGS 已声明 data dir
     { userDataPath: '/Users/test/Library/Application Support/Lime Desktop Platform' },
   );
   assert.deepEqual(equalsArgConfig?.args, ['--stdio', '--data-dir=/tmp/app-server', '--flag', 'value']);
+});
+
+test('resolveAppServerSidecarLaunchConfig 支持换行分隔参数中的空格路径', () => {
+  const config = resolveAppServerSidecarLaunchConfig(
+    {
+      APP_SERVER_BIN: '/opt/app-server',
+      APP_SERVER_ARGS: [
+        '--backend',
+        'runtime',
+        '--data-dir=/Users/test/Library/Application Support/content-studio/app-server',
+      ].join('\n'),
+    },
+    { userDataPath: '/Users/test/Library/Application Support/Lime Desktop Platform' },
+  );
+
+  assert.deepEqual(config?.args, [
+    '--stdio',
+    '--backend',
+    'runtime',
+    '--data-dir=/Users/test/Library/Application Support/content-studio/app-server',
+  ]);
 });
 
 test('resolveAppServerSidecarLaunchConfig 从 packaged resources manifest 解析 sidecar 并校验 sha256', () => {

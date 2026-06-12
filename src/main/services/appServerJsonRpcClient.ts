@@ -21,10 +21,13 @@ import { redactSensitiveValue } from './sensitiveRedaction';
 
 const APP_SERVER_RESOURCE_DIR_NAME = 'app-server';
 const APP_SERVER_RESOURCE_MANIFEST = 'manifest.json';
+const DEFAULT_REQUEST_TIMEOUT_MS = 8000;
+const AGENT_TURN_START_TIMEOUT_MS = 120_000;
 
 export interface AppServerJsonRpcTransport {
   writeLine(line: string): void;
   onLine(listener: (line: string) => void): void;
+  onClose(listener: (error: Error) => void): void;
   close(): void;
 }
 
@@ -79,8 +82,10 @@ type JsonRpcInboundEnvelope =
   | JsonRpcNotificationEnvelope;
 
 interface PendingRequest {
+  method: AppServerJsonRpcMethod;
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
+  timeout: NodeJS.Timeout;
 }
 
 interface AgentSessionStartResult {
@@ -166,11 +171,27 @@ export class JsonRpcProtocolError extends Error {
 
 export class StdioJsonRpcTransport implements AppServerJsonRpcTransport {
   private readonly lines: EventEmitter = new EventEmitter();
+  private readonly closed: EventEmitter = new EventEmitter();
+  private stderrTail = '';
 
   constructor(private readonly childProcess: ChildProcessWithoutNullStreams) {
     const reader = createInterface({ input: childProcess.stdout });
     reader.on('line', (line) => {
       this.lines.emit('line', line);
+    });
+    childProcess.stderr.on('data', (chunk) => {
+      this.stderrTail = `${this.stderrTail}${chunk.toString()}`.slice(-2000);
+    });
+    childProcess.once('error', (error) => {
+      this.closed.emit('close', error);
+    });
+    childProcess.once('exit', (code, signal) => {
+      this.closed.emit(
+        'close',
+        new Error(
+          `App Server JSON-RPC sidecar 已退出：code=${code ?? 'null'} signal=${signal ?? 'null'}${this.stderrTail ? ` stderr=${this.stderrTail}` : ''}`,
+        ),
+      );
     });
   }
 
@@ -180,6 +201,10 @@ export class StdioJsonRpcTransport implements AppServerJsonRpcTransport {
 
   onLine(listener: (line: string) => void): void {
     this.lines.on('line', listener);
+  }
+
+  onClose(listener: (error: Error) => void): void {
+    this.closed.on('close', listener);
   }
 
   close(): void {
@@ -248,13 +273,19 @@ export class AppServerJsonRpcClient {
   private initialized = false;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly eventBuffer: AgentRuntimeEvent[] = [];
+  private closed = false;
+  private closeError?: Error;
 
-  constructor(private readonly transport: AppServerJsonRpcTransport) {
+  constructor(
+    private readonly transport: AppServerJsonRpcTransport,
+    private readonly options: { requestTimeoutMs?: number } = {},
+  ) {
     this.transport.onLine((line) => this.handleLine(line));
+    this.transport.onClose((error) => this.handleClose(error));
   }
 
   get connected(): boolean {
-    return true;
+    return !this.closed;
   }
 
   async initialize(input: { clientInfo: { name: string; title?: string; version: string } }): Promise<unknown> {
@@ -289,20 +320,34 @@ export class AppServerJsonRpcClient {
       workspaceId: input.workspaceId ?? 'default',
       locale: input.locale,
     });
-    const turnResult = await this.request<AgentTurnStartResult>('agentSession/turn/start', {
-      sessionId: sessionResult.session.sessionId,
-      input: {
-        text: input.request.prompt,
-        attachments: input.request.attachments ?? [],
+    const turnResult = await this.request<AgentTurnStartResult>(
+      'agentSession/turn/start',
+      {
+        sessionId: sessionResult.session.sessionId,
+        input: {
+          text: input.request.prompt,
+          attachments: input.request.attachments ?? [],
+        },
+        runtimeOptions: createAppServerRuntimeOptionsProjection(input.request, input.runtimeContext),
       },
-      runtimeOptions: createAppServerRuntimeOptionsProjection(input.request, input.runtimeContext),
-    });
+      AGENT_TURN_START_TIMEOUT_MS,
+    );
 
     return {
       session: sessionResult.session,
       turn: turnResult.turn,
       events: [...this.eventBuffer],
     };
+  }
+
+  takeBufferedAgentEvents(input: { sessionId?: string; turnId?: string; afterSequence?: number } = {}): AgentRuntimeEvent[] {
+    const afterSequence = input.afterSequence;
+    return this.eventBuffer.filter((event) => {
+      if (input.sessionId && event.sessionId !== input.sessionId) return false;
+      if (input.turnId && event.turnId !== input.turnId) return false;
+      if (typeof afterSequence === 'number' && typeof event.sequence === 'number' && event.sequence <= afterSequence) return false;
+      return true;
+    });
   }
 
   async syncModelProvider(input: AppServerModelProviderSyncInput): Promise<AppServerModelProviderSyncResult> {
@@ -415,6 +460,7 @@ export class AppServerJsonRpcClient {
   }
 
   close(): void {
+    this.handleClose(new Error('App Server JSON-RPC client 已关闭。'));
     this.transport.close();
   }
 
@@ -443,13 +489,23 @@ export class AppServerJsonRpcClient {
     );
   }
 
-  private request<TResult>(method: AppServerJsonRpcMethod, params?: unknown): Promise<TResult> {
+  private request<TResult>(method: AppServerJsonRpcMethod, params?: unknown, timeoutMs = this.resolveRequestTimeoutMs()): Promise<TResult> {
+    if (this.closed) {
+      return Promise.reject(this.closeError ?? new Error('App Server JSON-RPC client 已关闭。'));
+    }
+
     const id = this.nextId++;
     const envelope: JsonRpcRequestEnvelope = { id, method, params };
     const promise = new Promise<TResult>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`App Server JSON-RPC 请求超时：method=${method} timeoutMs=${timeoutMs}`));
+      }, timeoutMs);
       this.pending.set(id, {
+        method,
         resolve: (value) => resolve(value as TResult),
         reject,
+        timeout,
       });
     });
     this.transport.writeLine(JSON.stringify(envelope));
@@ -466,13 +522,25 @@ export class AppServerJsonRpcClient {
       return;
     }
 
-    const envelope = JSON.parse(line) as JsonRpcInboundEnvelope;
+    let envelope: JsonRpcInboundEnvelope;
+    try {
+      envelope = JSON.parse(line) as JsonRpcInboundEnvelope;
+    } catch (error) {
+      this.handleClose(
+        new JsonRpcProtocolError(
+          `App Server JSON-RPC 返回了非法 JSON 行：${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
+      return;
+    }
+
     if ('id' in envelope) {
       const pending = this.pending.get(envelope.id);
       if (!pending) {
         return;
       }
       this.pending.delete(envelope.id);
+      clearTimeout(pending.timeout);
       if (envelope.error) {
         pending.reject(new JsonRpcProtocolError(envelope.error.message, envelope.error.code, envelope.error.data));
         return;
@@ -487,6 +555,24 @@ export class AppServerJsonRpcClient {
         this.eventBuffer.push(event);
       }
     }
+  }
+
+  private handleClose(error: Error): void {
+    if (this.closed) {
+      return;
+    }
+
+    this.closed = true;
+    this.closeError = error;
+    for (const [id, pending] of this.pending.entries()) {
+      clearTimeout(pending.timeout);
+      pending.reject(error);
+      this.pending.delete(id);
+    }
+  }
+
+  private resolveRequestTimeoutMs(): number {
+    return this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   }
 }
 
@@ -636,6 +722,12 @@ function parseShellLikeArgs(value: string | undefined): string[] {
   const input = value?.trim();
   if (!input) {
     return [];
+  }
+  if (input.includes('\n')) {
+    return input
+      .split(/\r?\n/)
+      .map((part) => part.trim())
+      .filter(Boolean);
   }
   return input.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)?.map((part) => part.replace(/^["']|["']$/g, '')) ?? [];
 }
@@ -867,10 +959,14 @@ function normalizeEventType(type: string): AgentRuntimeEvent['type'] {
   if (type === 'turn.canceled') {
     return 'canceled';
   }
-  if (type === 'turn.completed' || type === 'message.completed') {
+  if (type === 'turn.completed') {
+    return 'turn.completed';
+  }
+  if (type === 'message.completed') {
     return 'completed';
   }
   if (
+    type === 'artifact.snapshot' ||
     type === 'message.delta' ||
     type === 'tool.result' ||
     type === 'action.required' ||

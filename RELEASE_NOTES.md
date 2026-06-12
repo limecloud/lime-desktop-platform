@@ -1,5 +1,19 @@
 # Release Notes
 
+## 0.2.1
+
+### 已补强
+
+- 新增 `@limecloud/desktop-platform-electron-adapter` workspace，Product App 可通过 embedded Electron host 复用平台 Host Bridge、`lime.settings` 和 `lime.agent` capability。
+- 平台启动期支持预热自管理 App Server JSON-RPC sidecar，并向 Product App 投影 sidecar 连接状态，避免业务 App 自行管理 Provider key 或 App Server data root。
+- Runtime Bridge 增加 `/agent/events` 读取入口和 discovery descriptor 定期刷新，支持 Content Studio 等 Product App 在真实平台宿主下获得流式 runtime events。
+- Release readiness 增加平台 package 构建、跨仓 Product App runtime live smoke 和正式 Provider live smoke 的显式入口；默认发布门禁仍不调用外部 LLM Provider。
+- 模型设置页继续收敛到 App Server provider store：新 key 只作为短程保存输入，普通 JSON 和 Product App 输出不暴露明文凭证。
+
+### 验证
+
+- `npm run release:readiness`
+
 ## 0.2.0
 
 ### 已补强

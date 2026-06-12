@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { app } from 'electron';
 import { seedCatalog } from './seedCatalog';
@@ -82,7 +82,17 @@ function writeRuntimeBridgeDiscovery(descriptor: RuntimeBridgeDiscoveryDescripto
   writeFileSync(filePath, JSON.stringify(descriptor, null, 2), 'utf8');
 }
 
-function removeRuntimeBridgeDiscovery(): void {
+function removeRuntimeBridgeDiscovery(expected?: RuntimeBridgeDiscoveryDescriptor): void {
+  if (expected) {
+    try {
+      const current = JSON.parse(readFileSync(runtimeBridgeDiscoveryPath(), 'utf8')) as Partial<RuntimeBridgeDiscoveryDescriptor>;
+      if (current.endpoint !== expected.endpoint || current.token !== expected.token) {
+        return;
+      }
+    } catch {
+      return;
+    }
+  }
   rmSync(runtimeBridgeDiscoveryPath(), { force: true });
 }
 
@@ -343,7 +353,10 @@ export class PlatformService {
     (input) => this.invokeCapability(input),
     (input) => this.openNavigationIntent(input),
     (input) => this.createHostSnapshot(input),
+    (input) => this.readAgentRuntimeEvents(input),
   );
+  private runtimeBridgeDiscovery?: RuntimeBridgeDiscoveryDescriptor;
+  private runtimeBridgeDiscoveryTimer?: NodeJS.Timeout;
   private lastCatalogSyncAt = 0;
   private lastControlPlaneProjectionSyncAt = 0;
 
@@ -369,13 +382,62 @@ export class PlatformService {
         ),
     );
     if (this.options.publishRuntimeBridgeDiscovery !== false) {
-      void this.publishRuntimeBridgeDiscovery();
+      this.startRuntimeBridgeDiscoveryPublisher();
     }
   }
 
   private createAppServerSidecarLifecycle(): AppServerSidecarLifecycle | undefined {
     const config = resolveAppServerSidecarLaunchConfig();
     return config ? new AppServerSidecarLifecycle(config) : undefined;
+  }
+
+  async warmupAppServerSidecar(): Promise<{ ok: boolean; connected: boolean; error?: string }> {
+    if (!this.appServerSidecar) {
+      const message = this.appServerClientProvider?.isConfigured()
+        ? 'PlatformService 使用外部 App Server client provider，启动期不管理 sidecar。'
+        : 'App Server JSON-RPC sidecar 未配置。';
+      this.appendEvent({
+        level: 'warning',
+        message,
+        payload: {
+          source: 'platform-service-startup',
+          plaintextSecrets: false,
+        },
+      });
+      return { ok: false, connected: false, error: message };
+    }
+    try {
+      const client = this.appServerSidecar.getClient();
+      await client.initialize({
+        clientInfo: {
+          name: 'lime-desktop-platform',
+          title: 'Lime Desktop Platform',
+          version: '0.2.1',
+        },
+      });
+      this.appendEvent({
+        level: 'info',
+        message: 'Lime App Server sidecar 已随 Electron 启动。',
+        payload: {
+          bridge: 'app-server-json-rpc',
+          source: 'platform-service-startup',
+          plaintextSecrets: false,
+        },
+      });
+      return { ok: true, connected: this.appServerSidecar.connected };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Lime App Server sidecar 启动失败。';
+      this.appendEvent({
+        level: 'error',
+        message,
+        payload: {
+          bridge: 'app-server-json-rpc',
+          source: 'platform-service-startup',
+          plaintextSecrets: false,
+        },
+      });
+      return { ok: false, connected: false, error: message };
+    }
   }
 
   private async publishRuntimeBridgeDiscovery(): Promise<void> {
@@ -385,6 +447,7 @@ export class PlatformService {
         hostKind: hostProfile.hostKind,
         hostVersion: hostProfile.hostVersion,
       });
+      this.runtimeBridgeDiscovery = descriptor;
       writeRuntimeBridgeDiscovery(descriptor);
     } catch (error) {
       this.appendEvent({
@@ -396,6 +459,14 @@ export class PlatformService {
         },
       });
     }
+  }
+
+  private startRuntimeBridgeDiscoveryPublisher(): void {
+    void this.publishRuntimeBridgeDiscovery();
+    this.runtimeBridgeDiscoveryTimer = setInterval(() => {
+      void this.publishRuntimeBridgeDiscovery();
+    }, 5_000);
+    this.runtimeBridgeDiscoveryTimer.unref?.();
   }
 
   async getBootstrap(): Promise<PlatformBootstrap> {
@@ -742,6 +813,21 @@ export class PlatformService {
     };
   }
 
+  readAgentRuntimeEvents(input: {
+    appId: string;
+    entryKey: string;
+    sessionId?: string;
+    turnId?: string;
+    afterSequence?: number;
+  }) {
+    const client = this.appServerSidecar?.getClient() ?? this.appServerClientProvider?.getClient();
+    return client?.takeBufferedAgentEvents({
+      sessionId: input.sessionId,
+      turnId: input.turnId,
+      afterSequence: input.afterSequence,
+    }) ?? [];
+  }
+
   getRuntimeSnapshot(input: LaunchEntryInput): HostSnapshot | undefined {
     return this.store.readRuntimeSnapshots()[this.snapshotKey(input)];
   }
@@ -755,7 +841,12 @@ export class PlatformService {
       this.childProcesses.delete(appId);
     }
     this.runtimeBridge.close();
-    removeRuntimeBridgeDiscovery();
+    this.appServerSidecar?.close();
+    if (this.runtimeBridgeDiscoveryTimer) {
+      clearInterval(this.runtimeBridgeDiscoveryTimer);
+      this.runtimeBridgeDiscoveryTimer = undefined;
+    }
+    removeRuntimeBridgeDiscovery(this.runtimeBridgeDiscovery);
   }
 
   getModelSettings(): ModelSettings {

@@ -1,6 +1,6 @@
 {
   "name": "@limecloud/desktop-platform-react",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Lime Desktop Platform 公共 React UI modules。",
   "type": "module",
   "license": "Apache-2.0",
@@ -21,7 +21,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@limecloud/desktop-platform-contracts": "0.2.0"
+    "@limecloud/desktop-platform-contracts": "0.2.1"
   },
   "peerDependencies": {
     "react": ">=19.0.0"

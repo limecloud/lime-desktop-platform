@@ -1,7 +1,7 @@
 {
-  "name": "@limecloud/desktop-platform-host-core",
+  "name": "@limecloud/desktop-platform-electron-adapter",
   "version": "0.2.1",
-  "description": "Lime Desktop Platform 平台无关宿主核心契约。",
+  "description": "Lime Desktop Platform Electron adapter for Product App embedded hosts.",
   "type": "module",
   "license": "Apache-2.0",
   "main": "dist/index.js",

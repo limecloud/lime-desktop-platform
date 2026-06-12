@@ -556,12 +556,14 @@ export type AppServerJsonRpcMethod =
 
 export type AgentRuntimeEventType =
   | 'started'
+  | 'artifact.snapshot'
   | 'message.delta'
   | 'tool.call'
   | 'tool.result'
   | 'action.required'
   | 'needs-setup'
   | 'blocked'
+  | 'turn.completed'
   | 'completed'
   | 'failed'
   | 'canceled';
@@ -657,6 +659,7 @@ export interface AppServerRuntimeHostOptions {
 
 export interface AppServerRuntimeOptionsMetadata {
   workflowId?: string;
+  productCapabilityId?: string;
   requestedModelId?: string;
   permissionMode?: 'safe' | 'ask' | 'allow-all';
 }

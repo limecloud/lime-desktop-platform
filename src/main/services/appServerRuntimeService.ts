@@ -57,6 +57,8 @@ export interface AppServerRuntimeClientProvider {
 
 type RuntimeClientState = 'connected' | 'not-configured' | 'disconnected';
 type ModelProviderCredentialStateReader = (provider: ModelProviderConfig) => ModelProviderCredentialState;
+const APP_SERVER_AGENT_CAPABILITY_ID = 'lime.agent';
+const APP_SERVER_AGENT_COMPAT_CAPABILITY_ID = 'lime.agentExecution';
 
 function hasUsableAgentModel(
   settings: ModelSettings,
@@ -248,15 +250,28 @@ export function createAppServerRuntimeOptionsProjection(
   request: AgentRuntimeRequest,
   runtimeContext: AgentRuntimeContext,
 ): AppServerRuntimeOptionsProjection {
-  const metadata: AppServerRuntimeOptionsProjection['metadata'] = {
-    workflowId: request.runtimeOptions?.workflowId,
-    requestedModelId: request.runtimeOptions?.modelId,
-    permissionMode: request.runtimeOptions?.permissionMode,
-  };
-  const hasMetadata = Object.values(metadata).some((value) => value !== undefined);
+  const requestedCapabilityId = request.runtimeOptions?.capabilityId;
+  const metadata: AppServerRuntimeOptionsProjection['metadata'] = {};
+  if (request.runtimeOptions?.workflowId) {
+    metadata.workflowId = request.runtimeOptions.workflowId;
+  }
+  if (
+    requestedCapabilityId &&
+    requestedCapabilityId !== APP_SERVER_AGENT_CAPABILITY_ID &&
+    requestedCapabilityId !== APP_SERVER_AGENT_COMPAT_CAPABILITY_ID
+  ) {
+    metadata.productCapabilityId = requestedCapabilityId;
+  }
+  if (request.runtimeOptions?.modelId) {
+    metadata.requestedModelId = request.runtimeOptions.modelId;
+  }
+  if (request.runtimeOptions?.permissionMode) {
+    metadata.permissionMode = request.runtimeOptions.permissionMode;
+  }
+  const hasMetadata = Object.keys(metadata).length > 0;
 
   return {
-    capabilityId: request.runtimeOptions?.capabilityId,
+    capabilityId: requestedCapabilityId || APP_SERVER_AGENT_CAPABILITY_ID,
     stream: true,
     providerPreference: runtimeContext.modelProfile?.provider.appServerProviderId ?? runtimeContext.modelProfile?.provider.id,
     modelPreference: runtimeContext.modelProfile?.modelId,

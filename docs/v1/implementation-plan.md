@@ -129,7 +129,9 @@ samples/platform-conformance/
 - 缺模型、缺 OAuth、缺 billing、App Server client 未配置或未连接都返回 `needs-setup` 或 `blocked`。
 - 生产路径不能回退 mock backend、Pi agent 或 Claude SDK。
 - Electron 和 Tauri 都可以用同一套 JSON-RPC contract。
-- packaged resources manifest 解析、sha256 校验和 mock backend 阻断已有单测；packaged-resource staging sidecar smoke 已通过，external fixture event-stream smoke 已验证 `message.delta` / `turn.completed` 通过真实 App Server JSON-RPC `agentSession/event` 推送到客户端，并验证同一 session 的 `agentSession/read` read model 能读回本轮 turn 和用户消息。Electron packaged artifact smoke 和真实 provider / RuntimeBackend live streaming 单独作为后续验收。
+- packaged resources manifest 解析、sha256 校验和 mock backend 阻断已有单测；packaged-resource staging sidecar smoke 已通过，external fixture event-stream smoke 已验证 `message.delta` / `turn.completed` 通过真实 App Server JSON-RPC `agentSession/event` 推送到客户端，并验证同一 session 的 `agentSession/read` read model 能读回本轮 turn 和用户消息。Electron packaged artifact smoke 单独作为后续验收。
+- `smoke:product-app-runtime-live` 作为显式跨仓 live fixture，已验证真实 Desktop Platform Electron、真实 App Server JSON-RPC sidecar、App Server `--backend external` fixture、runtime bridge discovery、`content-studio` 和 `zhongcao` 能串起同一条 `lime.agent` current 主链；该入口不进入默认 `verify:local`，不调用正式 LLM Provider API。
+- `smoke:live-provider-runtime` 作为显式正式 Provider live API smoke，已提供 fail-closed 入口：只有传 `--allow-live-provider` 或 `LIME_DESKTOP_ALLOW_LIVE_PROVIDER=1`，并提供 `LIME_DESKTOP_LIVE_PROVIDER_API_KEY` / `LIME_DESKTOP_LIVE_PROVIDER_MODEL` 后，才会启动真实 Desktop Platform Electron、真实 App Server `--backend runtime` 和上游 LLM API 调用；未授权时在启动 Electron 前失败；通过标准要求 runtime event 至少包含 `message.delta`、`turn.completed` 或 `completed`，单纯 `started` 不算 live API 通过。
 
 ### P6: 首批 App 接入与 fixture
 
@@ -138,12 +140,15 @@ samples/platform-conformance/
 - 编写 `content-studio` 和 `zhongcao` 独立 Product App 接入文档。
 - 用 `samples/platform-conformance` 验证 reference fixture。
 - 验证相同平台底座下的不同 Product App 消费方式。
+- 维护 `smoke:product-app-runtime-live` 跨仓 live fixture，确保 Product App 只能通过平台 discovery 调 `lime.agent`，不能保存 Provider Key、不能直连 LLM、不能让业务私有 capability 进入 App Server capability policy。
 
 验收：
 
 - `content-studio`、`zhongcao` 能按独立 Product App 消费平台能力。
 - `samples/platform-conformance` 能作为 fixture 安装、启动、更新和被设置。
 - 业务逻辑不需要重写平台能力。
+- `content-studio`、`zhongcao` 在跨仓 live fixture 中都能从 App Server current events 读取 `artifact.snapshot` / `turn.completed`；Provider Key 不出现在平台 bootstrap、设置返回值或 Product App 输出中。
+- 正式 Provider live API 验收只通过 `smoke:live-provider-runtime` 进行；它不验证 Product App discovery，而是验证平台设置写入 App Server provider store 后，`lime.agent` RuntimeBackend 可用 `providerPreference` / `modelPreference` 和非敏感 `AgentRuntimeContext` 调用真实上游。
 
 ### P6.5: Product App Storage
 
@@ -204,6 +209,9 @@ samples/platform-conformance/
 - 开启/禁用/升级完整链路测试
 - App Server JSON-RPC bridge smoke
 - Product App 设置扩展保存 smoke
+- 显式跨仓 `smoke:product-app-runtime-live`：仅在具备本仓、`content-studio`、`zhongcao` 构建产物和 App Server binary 时运行；它验证 Product App runtime current 链路，不替代真实 Provider live API 测试，也不进入默认 `verify:local`
+- 显式正式 Provider `smoke:live-provider-runtime`：仅在具备 App Server binary、真实 Provider Key、真实模型 ID 且明确授权调用上游 LLM API 时运行；它验证 `settings.saveModel -> modelProviderKey/create -> lime.agent -> RuntimeBackend`，并要求模型输出或 turn 完成事件，不进入默认 `verify:local`
+- 发布前本地验收统一走 `npm run release:readiness`；它只编排 `governance:hardcode-scan`、`build:packages` 和 `verify:local`，不提交、不打 tag、不推送。需要把跨仓 Product App runtime live fixture 纳入发布检查时，显式运行 `npm run release:readiness:product-app-live`；需要把正式 Provider live API 纳入发布检查时，显式运行 `npm run release:readiness:live-provider` 并提供 live smoke gate 所需环境变量。
 
 ## 5. 风险控制
 

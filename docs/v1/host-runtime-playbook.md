@@ -23,6 +23,7 @@ repo: lime-desktop-platform
 | 更新 agentapp package | 检查 package 新版本、下载、校验、切换、保留旧版本回退面 | 显示 package 更新状态 | `update-failed`，保留旧 package |
 | 卸载 reference fixture | 停止 reference runtime 进程、移除 fixture 安装记录、清理 runtime snapshot | fixture 回到未安装 / 待安装状态 | 未安装时返回 blocked 结果 |
 | 修改模型设置 | 更新默认模型、provider 和覆盖规则 | 设置页即时反映 | 提示待补齐 / 待配置 |
+| Product App 调用 Agent Runtime | 发布 runtime bridge discovery，Product App 通过 `lime.agent` 进入 App Server JSON-RPC | 业务 App 收到 `artifact.snapshot` / `turn.completed` 等结果 | `blocked` / `needs-setup`，不回退 mock 或直连 Provider |
 | OAuth 登录 | 更新租户身份和会话 | 显示已登录状态 | 登录失败回到登录页 |
 | OEM 变更 | 切换品牌、logo、主题和文案投影 | 壳层外观变化 | 品牌配置缺失 |
 | 充值 / 订阅 | 投影套餐、余额和状态 | 显示租户级账单状态 | `needs-payment` |
@@ -70,14 +71,24 @@ repo: lime-desktop-platform
 2. 云端默认值只做投影，不覆盖最终选择。
 3. 运行中的 App 只接收快照更新，不直接操作本地设置事实。
 
-### 3.6 平台变化事件
+### 3.6 Product App Runtime Bridge
+
+1. 平台启动 App Server sidecar，并把 runtime bridge discovery 写入本机 loopback endpoint。
+2. Product App 读取 `LIME_DESKTOP_PLATFORM_BRIDGE_DISCOVERY_PATH` 或宿主注入的 discovery snapshot，向平台 `/attach` 绑定 appId 和 workspace。
+3. Product App 只能通过 Capability SDK 调用 `lime.agent`；业务私有 capability id 只能作为 metadata 留痕，不能进入 App Server capability policy。
+4. 平台从模型设置解析 App Server provider id、model id 和非敏感 `AgentRuntimeContext`，通过 `agentSession/start` 与 `agentSession/turn/start` 调 RuntimeCore。
+5. App Server 从 provider store 解析 key；runtime payload、Host Snapshot、Product App 输出和 `lime.storage` 都不得包含明文 Provider Key。
+6. 平台把 App Server current events 原样投影为 `message.delta`、`artifact.snapshot`、`turn.completed` 等 runtime events，Product App 根据事件更新自身草稿或工作流状态。
+7. `smoke:product-app-runtime-live` 用真实 Desktop Platform Electron、真实 App Server JSON-RPC sidecar、external backend fixture、`content-studio` 和 `zhongcao` 验证这条链路；它不进入默认 `verify:local`，也不调用正式 LLM Provider API。
+
+### 3.7 平台变化事件
 
 1. 任何会改变平台状态的 IPC 操作完成后发出 `platform:changed`。
 2. 事件载荷包含 `reason`、`appId`、`entryKey`、`timestamp` 和最新 `bootstrap`。
 3. 业务 App 通过 `window.limeDesktop.platform.onChanged(...)` 订阅。
 4. 业务 App 收到事件后重新计算自身 UI/readiness，不写回平台事实源。
 
-### 3.7 Reference Fixture 卸载
+### 3.8 Reference Fixture 卸载
 
 1. 校验 app 是否存在于本地安装记录。
 2. 停止对应 reference runtime 子进程。
@@ -87,7 +98,7 @@ repo: lime-desktop-platform
 6. 重新生成 projection，状态回到 `needs-setup`。
 7. 第一阶段默认 `keepData: true`，业务数据安全删除必须另走显式确认流程。
 
-### 3.8 limecore catalog 与 agentapp package 更新
+### 3.9 limecore catalog 与 agentapp package 更新
 
 1. 平台启动或检查更新时，通过 `LIMECORE_CATALOG_URL` 或 `LIMECORE_BASE_URL` 拉取 catalog。
 2. 未配置或同步失败时，回退到中性 `samples/platform-conformance`，并在 diagnostics 的 `controlPlane` 中标记来源和错误。
@@ -97,7 +108,7 @@ repo: lime-desktop-platform
 6. 只有已校验 artifact 才能应用更新；缺 artifact 或 hash 不匹配返回 `blocked`。
 7. sample fallback 只能做开发态 projection，不能伪装成真实 release 下载成功。
 
-### 3.9 Product App 自身更新
+### 3.10 Product App 自身更新
 
 1. Product App updater 检查 `limecore` 的 Product App release metadata。
 2. 有新版本时，由 Electron updater、Tauri updater、系统安装器或产品自有安装器下载并校验安装包。

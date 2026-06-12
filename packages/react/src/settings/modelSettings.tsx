@@ -320,9 +320,12 @@ export function PlatformModelSettingsPage(props: {
     [props.modelSettings.providers],
   );
   const defaultProviderId = props.modelSettings.defaultAgentProviderId ?? props.modelSettings.providers[0]?.id;
-  const initialProvider = baseProviders.find((provider) => provider.id === defaultProviderId) ?? baseProviders[0];
+  const initialProvider =
+    baseProviders.find((provider) => provider.id === defaultProviderId && isProviderVisibleInEnabledModelList(provider)) ??
+    baseProviders.find((provider) => isProviderVisibleInEnabledModelList(provider));
   const [selectedProviderId, setSelectedProviderId] = useState<string>(initialProvider?.id ?? '');
   const [mode, setMode] = useState<'details' | 'catalog'>(initialProvider ? 'details' : 'catalog');
+  const [catalogRequested, setCatalogRequested] = useState(false);
   const [catalogProviders, setCatalogProviders] = useState<PlatformModelProviderProjection[]>([]);
   const [providerDrafts, setProviderDrafts] = useState<Record<string, ProviderDraftState>>(() =>
     Object.fromEntries(baseProviders.map((provider) => [provider.id, createProviderDraft(provider)])),
@@ -334,7 +337,13 @@ export function PlatformModelSettingsPage(props: {
     () => mergeModelProviders(baseProviders, catalogProviders),
     [baseProviders, catalogProviders],
   );
-  const selectedProvider = normalizedProviders.find((provider) => provider.id === selectedProviderId) ?? normalizedProviders[0];
+  const visibleProviders = useMemo(
+    () => normalizedProviders.filter((provider) => isProviderVisibleInEnabledModelList(provider)),
+    [normalizedProviders],
+  );
+  const selectedProvider = selectedProviderId
+    ? normalizedProviders.find((provider) => provider.id === selectedProviderId)
+    : undefined;
 
   useEffect(() => {
     setProviderDrafts((current) => {
@@ -349,20 +358,29 @@ export function PlatformModelSettingsPage(props: {
   }, [normalizedProviders]);
 
   useEffect(() => {
-    if (!selectedProviderId && normalizedProviders[0]) {
-      setSelectedProviderId(normalizedProviders[0].id);
+    if (!catalogRequested && !selectedProviderId && visibleProviders[0]) {
+      setSelectedProviderId(visibleProviders[0].id);
       setMode('details');
     }
-  }, [normalizedProviders, selectedProviderId]);
+  }, [catalogRequested, selectedProviderId, visibleProviders]);
 
   const selectProvider = (providerId: string): void => {
     setSelectedProviderId(providerId);
     setMode('details');
+    setCatalogRequested(false);
     setTestState('idle');
     setGuideProviderId(undefined);
   };
 
   const openCatalog = (): void => {
+    setSelectedProviderId('');
+    setMode('catalog');
+    setCatalogRequested(true);
+    setTestState('idle');
+    setGuideProviderId(undefined);
+  };
+
+  const createCustomProvider = (): void => {
     const provider = createBlankProviderProjection(normalizedProviders);
     setCatalogProviders((current) => [...current, provider]);
     setProviderDrafts((current) => ({
@@ -371,6 +389,7 @@ export function PlatformModelSettingsPage(props: {
     }));
     setSelectedProviderId(provider.id);
     setMode('details');
+    setCatalogRequested(false);
     setTestState('idle');
     setGuideProviderId(undefined);
   };
@@ -464,17 +483,17 @@ export function PlatformModelSettingsPage(props: {
   };
 
   return (
-    <div className="lime-model-settings">
-      <div className="lime-model-side">
+    <div className="lime-model-settings" data-testid="api-key-provider-section">
+      <aside className="lime-model-side" data-testid="enabled-model-list">
         <div className="lime-model-side-head">
           <div>
             <strong>启用的模型</strong>
             <span>拖拽排序，首位为默认</span>
           </div>
-          <button type="button" onClick={openCatalog} aria-label="添加模型">+</button>
+          <button type="button" onClick={openCatalog} aria-label="添加模型" data-testid="enabled-model-add-icon-button">+</button>
         </div>
-        <div className="lime-model-enabled-list">
-          {normalizedProviders.length > 0 ? normalizedProviders.map((provider, index) => (
+        <div className="lime-model-enabled-list" data-testid="enabled-model-scroll-region">
+          {visibleProviders.length > 0 ? visibleProviders.map((provider, index) => (
             <ProviderListItem
               provider={provider}
               active={mode === 'details' && provider.id === selectedProvider?.id}
@@ -484,20 +503,22 @@ export function PlatformModelSettingsPage(props: {
             />
           )) : (
             <div className="lime-model-empty-state">
-              <strong>尚未配置 Provider</strong>
-              <span>添加自定义 Provider，填写协议、凭证和模型 ID 后保存。</span>
+              <strong>还没有启用模型</strong>
+              <span>点击添加模型后，再从自定义供应商里配置真实模型。</span>
             </div>
           )}
         </div>
-        <button className={mode === 'catalog' ? 'lime-model-add-button active' : 'lime-model-add-button'} type="button" onClick={openCatalog}>
-          <span aria-hidden="true">+</span>
-          添加模型
-        </button>
-      </div>
+        <div className="lime-model-side-footer">
+          <button className={mode === 'catalog' ? 'lime-model-add-button active' : 'lime-model-add-button'} type="button" onClick={openCatalog} data-testid="add-model-button">
+            <span aria-hidden="true">+</span>
+            添加模型
+          </button>
+        </div>
+      </aside>
 
-      <div className="lime-model-main">
+      <div className="lime-model-main" data-testid="api-key-provider-detail">
         {mode === 'catalog' || !selectedProvider || !selectedDraft ? (
-          <ProviderEmptyEditor onCreateProvider={openCatalog} />
+          <ProviderEmptyEditor onCreateProvider={createCustomProvider} />
         ) : (
           <ProviderConfigCard
             provider={selectedProvider}
@@ -514,14 +535,16 @@ export function PlatformModelSettingsPage(props: {
             onUpdateDraft={(patch) => updateProviderDraft(selectedProvider.id, patch)}
           />
         )}
-        <div className="lime-model-status">{saveStatus}</div>
-        <button
-          className="lime-model-intent-link"
-          type="button"
-          onClick={() => void props.onOpenPlatformIntent({ target: 'model-settings', reason: '从公共模型设置页打开平台模型设置。' })}
-        >
-          打开完整模型设置
-        </button>
+        <footer className="lime-model-detail-footer">
+          <div className="lime-model-status">{saveStatus}</div>
+          <button
+            className="lime-model-intent-link"
+            type="button"
+            onClick={() => void props.onOpenPlatformIntent({ target: 'model-settings', reason: '从公共模型设置页打开平台模型设置。' })}
+          >
+            打开完整模型设置
+          </button>
+        </footer>
       </div>
     </div>
   );
@@ -534,12 +557,17 @@ function ProviderListItem(props: {
   onSelect: () => void;
 }): ReactElement {
   return (
-    <button className={props.active ? 'lime-model-provider-row active' : 'lime-model-provider-row'} type="button" onClick={props.onSelect}>
+    <button
+      className={props.active ? 'lime-model-provider-row active' : 'lime-model-provider-row'}
+      type="button"
+      data-testid="enabled-model-item"
+      data-provider-id={props.provider.id}
+      data-selected={props.active ? 'true' : 'false'}
+      onClick={props.onSelect}
+    >
       <span aria-hidden="true">⋮</span>
-      <strong>
-        <ProviderIcon providerId={props.provider.id} />
-        {props.provider.displayName}
-      </strong>
+      <ProviderIcon providerId={props.provider.id} />
+      <strong>{props.provider.displayName}</strong>
       {props.defaultLabel ? <em>默认</em> : null}
       <small>{props.provider.models[0] ?? '未设置模型'}</small>
     </button>
@@ -589,6 +617,21 @@ function getDefaultModelForCapability(
   return provider?.models[0];
 }
 
+function isProviderVisibleInEnabledModelList(provider: PlatformModelProviderProjection): boolean {
+  if (provider.enabled === false) {
+    return false;
+  }
+  const hasModel = uniquePlatformModels(provider.models).length > 0;
+  const hasCredential = Boolean(provider.apiKeyConfigured);
+  const protocol = normalizeModelProtocol(provider.protocol);
+  const isKeylessLocalProvider =
+    protocol === 'local' &&
+    provider.authType === 'none' &&
+    Boolean(provider.baseUrl?.trim() || hasModel);
+
+  return hasCredential || hasModel || isKeylessLocalProvider;
+}
+
 function ProviderConfigCard(props: {
   provider: PlatformModelProviderProjection;
   modelSettings: PlatformModelSettingsProjection;
@@ -605,116 +648,129 @@ function ProviderConfigCard(props: {
 }): ReactElement {
   const ready = props.draft.authType === 'none' || props.draft.apiKeyConfigured || props.draft.apiKey.trim().length > 0 || props.testState === 'ok';
   return (
-    <section className="lime-model-config-card">
-      <div className="lime-model-card-title">
-        <div className="lime-model-card-title-main">
-          <ProviderIcon providerId={props.provider.id} />
-          <h2>{props.draft.displayName || props.provider.displayName}</h2>
+    <section className="lime-model-config-card" data-testid="provider-setting">
+      <div className="lime-model-detail-head">
+        <div className="lime-model-card-title">
+          <div className="lime-model-card-title-main">
+            <ProviderIcon providerId={props.provider.id} />
+            <h2>{props.draft.displayName || props.provider.displayName}</h2>
+          </div>
+          <button type="button" onClick={props.onOpenProviderGuide}>获取凭证 ↗</button>
         </div>
-        <button type="button" onClick={props.onOpenProviderGuide}>获取凭证 ↗</button>
-      </div>
-      {props.guideRequested ? (
-        <div className="lime-model-guide-notice">
-          已请求打开 {props.provider.displayName} 凭证获取入口；真实外部链接由平台 provider metadata 接入。
+        <div className={ready ? 'lime-model-ready-banner' : 'lime-model-ready-banner pending'}>
+          {ready ? '已具备调用条件' : '需要补齐凭证或启用无凭证本地运行时'}
         </div>
-      ) : null}
-      <div className={ready ? 'lime-model-ready-banner' : 'lime-model-ready-banner pending'}>
-        {ready ? '已具备调用条件' : '需要补齐凭证或启用无凭证本地运行时'}
+        {props.guideRequested ? (
+          <div className="lime-model-guide-notice">
+            已请求打开 {props.provider.displayName} 凭证获取入口；真实外部链接由平台 provider metadata 接入。
+          </div>
+        ) : null}
       </div>
-      <div className="lime-model-field-grid">
-        <label className="lime-model-field">
-          <span>Provider 名称</span>
-          <input
-            value={props.draft.displayName}
-            onChange={(event) => props.onUpdateDraft({ displayName: event.target.value })}
-            placeholder="供应商名称"
+      <div className="lime-model-config-scroll">
+        <section className="lime-model-config-section">
+          <h3>服务商信息</h3>
+          <div className="lime-model-field-grid">
+            <label className="lime-model-field">
+              <span>Provider 名称</span>
+              <input
+                value={props.draft.displayName}
+                onChange={(event) => props.onUpdateDraft({ displayName: event.target.value })}
+                placeholder="供应商名称"
+              />
+            </label>
+            <label className="lime-model-field">
+              <span>Base URL</span>
+              <input
+                value={props.draft.baseUrl}
+                onChange={(event) => props.onUpdateDraft({ baseUrl: event.target.value })}
+                placeholder="https://api.example.com/v1"
+              />
+            </label>
+          </div>
+          <div className="lime-model-field-grid">
+            <label className="lime-model-field">
+              <span>API 格式</span>
+              <select
+                value={props.draft.protocol}
+                onChange={(event) => props.onUpdateDraft({ protocol: event.target.value as ModelProviderConfig['protocol'] })}
+              >
+                <option value="openai-compatible">OpenAI Compatible</option>
+                <option value="anthropic-compatible">Anthropic Compatible</option>
+                <option value="gemini-native">Gemini Native</option>
+                <option value="local">Local</option>
+              </select>
+            </label>
+            <label className="lime-model-field">
+              <span>认证方式</span>
+              <select
+                value={props.draft.authType}
+                onChange={(event) => props.onUpdateDraft({ authType: event.target.value as ModelProviderConfig['authType'] })}
+              >
+                <option value="api-key">API Key</option>
+                <option value="oauth">OAuth</option>
+                <option value="none">None</option>
+              </select>
+            </label>
+          </div>
+        </section>
+        <section className="lime-model-config-section">
+          <h3>访问凭证</h3>
+          <label className="lime-model-field">
+            <span>API 密钥</span>
+            <input
+              value={props.draft.apiKey}
+              onChange={(event) => props.onUpdateDraft({ apiKey: event.target.value, apiKeyConfigured: event.target.value.trim().length > 0 })}
+              placeholder={props.draft.apiKeyConfigured ? '已配置，输入新密钥后更新状态' : '输入 API 密钥'}
+              type="password"
+            />
+          </label>
+          <PlatformEditableToggleRow
+            checked={props.draft.useResponsesApi}
+            description="OpenAI 兼容 provider 可优先使用 Responses API；其他格式由 App Server RuntimeCore 选择合适方法。"
+            title="使用 Responses API"
+            onToggle={() => props.onUpdateDraft({ useResponsesApi: !props.draft.useResponsesApi })}
           />
-        </label>
-        <label className="lime-model-field">
-          <span>Base URL</span>
-          <input
-            value={props.draft.baseUrl}
-            onChange={(event) => props.onUpdateDraft({ baseUrl: event.target.value })}
-            placeholder="https://api.example.com/v1"
+          <PlatformEditableToggleRow
+            checked={props.draft.enabled}
+            description="停用后不会出现在 Agent Runtime 可选 provider 中。"
+            title="启用 Provider"
+            onToggle={() => props.onUpdateDraft({ enabled: !props.draft.enabled })}
           />
-        </label>
-      </div>
-      <div className="lime-model-field-grid">
-        <label className="lime-model-field">
-          <span>API 格式</span>
-          <select
-            value={props.draft.protocol}
-            onChange={(event) => props.onUpdateDraft({ protocol: event.target.value as ModelProviderConfig['protocol'] })}
-          >
-            <option value="openai-compatible">OpenAI Compatible</option>
-            <option value="anthropic-compatible">Anthropic Compatible</option>
-            <option value="gemini-native">Gemini Native</option>
-            <option value="local">Local</option>
-          </select>
-        </label>
-        <label className="lime-model-field">
-          <span>认证方式</span>
-          <select
-            value={props.draft.authType}
-            onChange={(event) => props.onUpdateDraft({ authType: event.target.value as ModelProviderConfig['authType'] })}
-          >
-            <option value="api-key">API Key</option>
-            <option value="oauth">OAuth</option>
-            <option value="none">None</option>
-          </select>
-        </label>
-      </div>
-      <PlatformEditableToggleRow
-        checked={props.draft.useResponsesApi}
-        description="OpenAI 兼容 provider 可优先使用 Responses API；其他格式由 App Server RuntimeCore 选择合适方法。"
-        title="使用 Responses API"
-        onToggle={() => props.onUpdateDraft({ useResponsesApi: !props.draft.useResponsesApi })}
-      />
-      <PlatformEditableToggleRow
-        checked={props.draft.enabled}
-        description="停用后不会出现在 Agent Runtime 可选 provider 中。"
-        title="启用 Provider"
-        onToggle={() => props.onUpdateDraft({ enabled: !props.draft.enabled })}
-      />
-      <label className="lime-model-field">
-        <span>API 密钥</span>
-        <input
-          value={props.draft.apiKey}
-          onChange={(event) => props.onUpdateDraft({ apiKey: event.target.value, apiKeyConfigured: event.target.value.trim().length > 0 })}
-          placeholder={props.draft.apiKeyConfigured ? '已配置，输入新密钥后更新状态' : '输入 API 密钥'}
-          type="password"
-        />
-      </label>
-      <div className="lime-model-priority">
-        <span>模型优先级（至少添加一个）</span>
-        <div className="lime-model-priority-box">
-          {props.draft.models.map((model, index) => (
-            <div className="lime-model-priority-row" key={`${props.provider.id}:${model}`}>
-              <span aria-hidden="true">⋮</span>
-              {index === 0 ? <em>主模型</em> : <em>备用 {index}</em>}
-              <strong>{model}</strong>
-              <div className="lime-model-priority-actions">
-                <button type="button" disabled={index === 0} onClick={() => props.onMovePriorityModel(model, -1)} aria-label="上移模型">↑</button>
-                <button type="button" disabled={index === props.draft.models.length - 1} onClick={() => props.onMovePriorityModel(model, 1)} aria-label="下移模型">↓</button>
-                <button type="button" disabled={props.draft.models.length <= 1} onClick={() => props.onRemovePriorityModel(model)} aria-label="移除模型">×</button>
+        </section>
+        <section className="lime-model-config-section">
+          <h3>模型优先级</h3>
+          <div className="lime-model-priority">
+            <span>至少添加一个模型，首位作为默认调用模型。</span>
+            <div className="lime-model-priority-box">
+              {props.draft.models.map((model, index) => (
+                <div className="lime-model-priority-row" key={`${props.provider.id}:${model}`}>
+                  <span aria-hidden="true">⋮</span>
+                  {index === 0 ? <em>主模型</em> : <em>备用 {index}</em>}
+                  <strong>{model}</strong>
+                  <div className="lime-model-priority-actions">
+                    <button type="button" disabled={index === 0} onClick={() => props.onMovePriorityModel(model, -1)} aria-label="上移模型">↑</button>
+                    <button type="button" disabled={index === props.draft.models.length - 1} onClick={() => props.onMovePriorityModel(model, 1)} aria-label="下移模型">↓</button>
+                    <button type="button" disabled={props.draft.models.length <= 1} onClick={() => props.onRemovePriorityModel(model)} aria-label="移除模型">×</button>
+                  </div>
+                </div>
+              ))}
+              <div className="lime-model-add-priority">
+                <input
+                  value={props.draft.modelInput}
+                  onChange={(event) => props.onUpdateDraft({ modelInput: event.target.value })}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      props.onAddPriorityModel();
+                    }
+                  }}
+                  placeholder="输入模型 ID"
+                />
+                <button type="button" onClick={props.onAddPriorityModel}>+ 添加模型</button>
               </div>
             </div>
-          ))}
-          <div className="lime-model-add-priority">
-            <input
-              value={props.draft.modelInput}
-              onChange={(event) => props.onUpdateDraft({ modelInput: event.target.value })}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  props.onAddPriorityModel();
-                }
-              }}
-              placeholder="输入模型 ID"
-            />
-            <button type="button" onClick={props.onAddPriorityModel}>+ 添加模型</button>
           </div>
-        </div>
+        </section>
       </div>
       <div className="lime-model-card-actions">
         <button className="lime-model-test-button" type="button" onClick={props.onTestConnection}>
@@ -733,10 +789,10 @@ function ProviderConfigCard(props: {
 
 function ProviderEmptyEditor(props: { onCreateProvider: () => void }): ReactElement {
   return (
-    <section className="lime-model-catalog">
-      <div className="lime-model-empty-state">
-        <strong>添加自定义 Provider</strong>
-        <span>平台不预置品牌 Provider。请显式创建 Provider，并填写真实 Base URL、API 格式、认证方式和模型 ID。</span>
+    <section className="lime-model-catalog" data-testid="provider-setting-empty">
+      <div className="lime-model-empty-panel">
+        <strong>选择或添加模型</strong>
+        <span>左侧选择一个已启用模型后，这里只展示密钥、模型优先级和测试连接。</span>
       </div>
       <div className="lime-model-catalog-grid">
         <button className="lime-model-catalog-card" type="button" onClick={props.onCreateProvider}>
@@ -744,7 +800,7 @@ function ProviderEmptyEditor(props: { onCreateProvider: () => void }): ReactElem
             <ProviderIcon providerId="custom" />
             自定义 Provider
           </strong>
-          <span>从空白配置开始，不写入固定服务商或默认模型。</span>
+          <span>填写真实 Base URL、API 格式、认证方式和模型 ID。</span>
           <small>openai-compatible / anthropic-compatible / gemini-native / local</small>
         </button>
       </div>
@@ -778,11 +834,23 @@ function PlatformEditableToggleRow(props: {
 
 const runtimeModelMenuStyles = `
 .lime-runtime-model-menu {
+  --lime-runtime-model-font-family: var(--lime-platform-font-family, inherit);
+  --lime-runtime-model-text: var(--lime-platform-text, var(--text, #1a202c));
+  --lime-runtime-model-text-secondary: var(--lime-platform-text-secondary, var(--text-secondary, #4a5568));
+  --lime-runtime-model-muted: var(--lime-platform-muted, var(--muted, #8a99ad));
+  --lime-runtime-model-accent: var(--lime-platform-accent, var(--cyan, #395745));
+  --lime-runtime-model-accent-soft: var(--lime-platform-accent-soft, var(--cyan-light, rgba(57, 87, 69, 0.07)));
+  --lime-runtime-model-panel: var(--lime-platform-panel, var(--panel, #ffffff));
+  --lime-runtime-model-panel-strong: var(--lime-platform-panel-strong, var(--panel-strong, #ebeef2));
+  --lime-runtime-model-line: var(--lime-platform-line, var(--line, rgba(17, 24, 39, 0.08)));
+  --lime-runtime-model-border: var(--lime-platform-border, var(--line, rgba(17, 24, 39, 0.09)));
+  --lime-runtime-model-radius-sm: var(--lime-platform-radius-sm, var(--radius-sm, 8px));
+  --lime-runtime-model-shadow: var(--lime-platform-shadow, 0 18px 48px rgba(17, 24, 39, 0.14));
   position: relative;
   display: inline-flex;
   min-width: 0;
-  color: #31423a;
-  font-family: inherit;
+  color: var(--lime-runtime-model-text);
+  font-family: var(--lime-runtime-model-font-family);
   letter-spacing: 0;
 }
 .lime-runtime-model-trigger {
@@ -792,13 +860,13 @@ const runtimeModelMenuStyles = `
   gap: 5px;
   min-width: 0;
   min-height: 34px;
-  border: 1px solid #d9e2dd;
+  border: 1px solid var(--lime-runtime-model-border);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.94);
-  color: #31423a;
+  background: color-mix(in srgb, var(--lime-runtime-model-panel) 94%, transparent);
+  color: var(--lime-runtime-model-text);
   cursor: pointer;
   padding: 0 12px;
-  box-shadow: 0 4px 14px rgba(32, 43, 51, 0.05);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--lime-runtime-model-text) 5%, transparent);
   font: inherit;
 }
 .lime-runtime-model-trigger:disabled {
@@ -818,12 +886,12 @@ const runtimeModelMenuStyles = `
   font-weight: 760;
 }
 .lime-runtime-model-trigger span {
-  color: #8a9a92;
+  color: var(--lime-runtime-model-muted);
   font-size: 10px;
 }
 .lime-runtime-model-trigger-icon,
 .lime-runtime-model-trigger-chevron {
-  color: #4a5b52;
+  color: var(--lime-runtime-model-text-secondary);
 }
 .lime-runtime-model-popover {
   position: absolute;
@@ -832,12 +900,12 @@ const runtimeModelMenuStyles = `
   display: grid;
   gap: 10px;
   width: min(520px, calc(100vw - 32px));
-  border: 1px solid #dce5df;
-  border-radius: 14px;
-  background: #ffffff;
-  color: #31423a;
+  border: 1px solid var(--lime-runtime-model-border);
+  border-radius: var(--lime-platform-radius, 14px);
+  background: var(--lime-runtime-model-panel);
+  color: var(--lime-runtime-model-text);
   padding: 12px;
-  box-shadow: 0 18px 48px rgba(32, 43, 51, 0.14);
+  box-shadow: var(--lime-runtime-model-shadow);
 }
 .lime-runtime-model-menu[data-placement="top"] .lime-runtime-model-popover {
   bottom: calc(100% + 10px);
@@ -853,13 +921,13 @@ const runtimeModelMenuStyles = `
   min-width: 0;
 }
 .lime-runtime-model-header strong {
-  color: #25352e;
+  color: var(--lime-runtime-model-text);
   font-size: 13px;
   font-weight: 760;
 }
 .lime-runtime-model-header span {
   overflow: hidden;
-  color: #8a9a92;
+  color: var(--lime-runtime-model-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
@@ -875,9 +943,9 @@ const runtimeModelMenuStyles = `
   min-width: 0;
   min-height: 34px;
   border: 0;
-  border-radius: 8px;
-  background: #edf3ef;
-  color: #405148;
+  border-radius: var(--lime-runtime-model-radius-sm);
+  background: color-mix(in srgb, var(--lime-runtime-model-panel-strong) 58%, var(--lime-runtime-model-panel));
+  color: var(--lime-runtime-model-text-secondary);
   padding: 0 12px;
   text-align: left;
   font: inherit;
@@ -890,12 +958,12 @@ const runtimeModelMenuStyles = `
 }
 .lime-runtime-model-list button:hover,
 .lime-runtime-model-footer button:hover {
-  background: #e4ece7;
+  background: color-mix(in srgb, var(--lime-runtime-model-accent) 8%, var(--lime-runtime-model-panel));
 }
 .lime-runtime-model-list button.active {
-  outline: 1px solid #9fb1a8;
-  background: #f8faf8;
-  color: #23352d;
+  outline: 1px solid color-mix(in srgb, var(--lime-runtime-model-accent) 32%, var(--lime-runtime-model-border));
+  background: var(--lime-runtime-model-accent-soft);
+  color: var(--lime-runtime-model-accent);
 }
 .lime-runtime-model-list button:disabled,
 .lime-runtime-model-footer button:disabled {
@@ -906,7 +974,7 @@ const runtimeModelMenuStyles = `
   display: grid;
   align-items: center;
   margin: 0;
-  color: #7a8d83;
+  color: var(--lime-runtime-model-muted);
   line-height: 1.45;
 }
 .lime-runtime-model-footer {

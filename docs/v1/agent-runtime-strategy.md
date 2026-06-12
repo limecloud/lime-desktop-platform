@@ -86,9 +86,11 @@ flowchart TB
 事件归一化：
 
 - `message.delta`
+- `artifact.snapshot`
 - `tool.call`
 - `tool.result`
 - `action.required`
+- `turn.completed`
 - `needs-setup`
 - `blocked`
 - `completed`
@@ -213,7 +215,7 @@ sequenceDiagram
 
 Renderer 不能 spawn、不能读 token、不能 import Pi SDK / Claude SDK。
 
-App Server client 不可用、未配置 `APP_SERVER_BIN` 或初始化失败时，`AppServerRuntimeService` 仍必须 fail closed；但 `blocked` event/result 也要携带同一个 `runtimeContext` / `modelProfile`。这不是伪执行成功，而是证明“平台设置中心 -> Desktop Host -> App Server JSON-RPC”交接契约已经稳定。注入测试 client 或配置化 stdio sidecar 可走 `started` 路径；开发态 live sidecar smoke 已覆盖 `initialize`、`capability/list`、`agentSession/start` 和 `agentSession/turn/start` 到 RuntimeCore backend 边界。packaged resources manifest 解析、相对路径约束、sha256 校验和 mock backend 阻断已有单元测试；`smoke:app-server-sidecar:packaged` 已覆盖 packaged-resource staging 启动真实 App Server；`smoke:app-server-sidecar:event-stream` 已用真实 App Server 的 external backend fixture 验证 `message.delta` / `turn.completed` 通过 `agentSession/event` 推送到客户端，并通过 `agentSession/read` 读回同一 session 的 turn 和用户消息 read model。`smoke:app-server-sidecar:package-resources` 可指向现有 Electron resources 或 package dir 验证资源形状和真实 stdio 启动，但不等同于已生成 Electron packaged artifact。Electron packaged artifact smoke 和真实 provider / RuntimeBackend live streaming 仍是后续验收项。
+App Server client 不可用、未配置 `APP_SERVER_BIN` 或初始化失败时，`AppServerRuntimeService` 仍必须 fail closed；但 `blocked` event/result 也要携带同一个 `runtimeContext` / `modelProfile`。这不是伪执行成功，而是证明“平台设置中心 -> Desktop Host -> App Server JSON-RPC”交接契约已经稳定。注入测试 client 或配置化 stdio sidecar 可走 `started` 路径；开发态 live sidecar smoke 已覆盖 `initialize`、`capability/list`、`agentSession/start` 和 `agentSession/turn/start` 到 RuntimeCore backend 边界。packaged resources manifest 解析、相对路径约束、sha256 校验和 mock backend 阻断已有单元测试；`smoke:app-server-sidecar:packaged` 已覆盖 packaged-resource staging 启动真实 App Server；`smoke:app-server-sidecar:event-stream` 已用真实 App Server 的 external backend fixture 验证 `message.delta` / `turn.completed` 通过 `agentSession/event` 推送到客户端，并通过 `agentSession/read` 读回同一 session 的 turn 和用户消息 read model。`smoke:product-app-runtime-live` 已用真实 Desktop Platform Electron、真实 App Server JSON-RPC sidecar、App Server `--backend external` fixture 和 runtime bridge discovery 验证 `content-studio`、`zhongcao` 只能通过平台 `lime.agent` 获取 `artifact.snapshot` / `turn.completed`，并验证 Provider Key 不出现在平台 bootstrap、设置返回值或 Product App 输出中；它是显式跨仓 live fixture，不进入默认 `verify:local`，也不等同于正式 LLM Provider live API 测试。`smoke:live-provider-runtime` 是正式 Provider live API 显式入口，默认未授权 fail-closed；只有 `--allow-live-provider` 或 `LIME_DESKTOP_ALLOW_LIVE_PROVIDER=1` 加平台专用 `LIME_DESKTOP_LIVE_PROVIDER_API_KEY` / `LIME_DESKTOP_LIVE_PROVIDER_MODEL` 才会启动真实 Desktop Platform Electron、App Server `--backend runtime` 和上游 LLM API 调用，用来验证 `settings.saveModel -> modelProviderKey/create -> providerPreference/modelPreference -> RuntimeBackend`；它必须看到 `message.delta`、`turn.completed` 或 `completed` 事件，单纯 `started` 不算正式 Provider live API 通过。`smoke:app-server-sidecar:package-resources` 可指向现有 Electron resources 或 package dir 验证资源形状和真实 stdio 启动，但不等同于已生成 Electron packaged artifact。Electron packaged artifact smoke 仍是后续验收项。
 
 ## 7. 治理分类
 
@@ -259,7 +261,7 @@ App Server client 不可用、未配置 `APP_SERVER_BIN` 或初始化失败时�
 - 接入 Lime App Server JSON-RPC client。
 - 配置化连接 stdio sidecar lifecycle；开发态可通过 `APP_SERVER_BIN` 指向本地 binary，生产必须走 packaged resources / manifest / sha256。
 - 把 `agentSession/event` 投影到 runtime events。
-- 已有单元测试覆盖 protocol order、runtime hostOptions handoff、event projection、sidecar spawn、`process.resourcesPath/app-server/manifest.json` 解析、binary sha256 校验、资源相对路径约束和 mock backend 阻断；`npm run smoke:app-server-sidecar` 可显式验证开发态 live sidecar，`npm run smoke:app-server-sidecar:packaged` 可验证 packaged-resource staging sidecar，`npm run smoke:app-server-sidecar:event-stream` 可用真实 App Server + external backend fixture 验证 `agentSession/event` 事件推送管道和 `agentSession/read` read model，`APP_SERVER_RESOURCE_DIR=/path/to/resources/app-server npm run smoke:app-server-sidecar:package-resources` 可验证现有 Electron resources / package dir，后续补真实 Electron packaged artifact smoke 和真实 provider / RuntimeBackend live streaming。
+- 已有单元测试覆盖 protocol order、runtime hostOptions handoff、event projection、sidecar spawn、`process.resourcesPath/app-server/manifest.json` 解析、binary sha256 校验、资源相对路径约束和 mock backend 阻断；`npm run smoke:app-server-sidecar` 可显式验证开发态 live sidecar，`npm run smoke:app-server-sidecar:packaged` 可验证 packaged-resource staging sidecar，`npm run smoke:app-server-sidecar:event-stream` 可用真实 App Server + external backend fixture 验证 `agentSession/event` 事件推送管道和 `agentSession/read` read model，`npm run smoke:product-app-runtime-live` 可显式验证平台 Electron + runtime bridge discovery + `content-studio` + `zhongcao` 的跨仓 Product App current 链路，`npm run smoke:live-provider-runtime` 可在显式授权和专用 Provider env 下验证真实 RuntimeBackend live API，`APP_SERVER_RESOURCE_DIR=/path/to/resources/app-server npm run smoke:app-server-sidecar:package-resources` 可验证现有 Electron resources / package dir，后续补真实 Electron packaged artifact smoke。
 
 ### P5: Tauri Adapter
 

@@ -72,3 +72,36 @@ npm run build:packages
 npm run verify:local
 npm exec --yes --package vitepress@1.6.4 -- vitepress build docs
 ```
+
+发布前本地验收入口：
+
+```bash
+npm run release:readiness
+```
+
+该入口会顺序运行 `governance:hardcode-scan`、`build:packages` 和 `verify:local`，不会提交、打 tag、推送或创建 GitHub Release。
+
+跨仓 Product App runtime live fixture 需要显式运行，不进入默认 `verify:local`：
+
+```bash
+npm run smoke:product-app-runtime-live
+npm run release:readiness:product-app-live
+```
+
+该入口会启动真实 `lime-desktop-platform` Electron、真实 Lime App Server JSON-RPC sidecar 和 App Server `--backend external` fixture，并通过 runtime bridge discovery 依次验证 `content-studio`、`zhongcao` 调用平台 `lime.agent`。它要求本仓库、`../content-studio`、`../zhongcao` 已有构建产物，并要求可用的 App Server binary；该 smoke 不调用正式 LLM Provider API，也不是生产 Provider live API 验收。它的守卫目标是证明 Product App 不保存 Provider Key、不直连 LLM、不使用 mock backend fallback，并且只能通过平台 discovery 与 App Server JSON-RPC runtime 获取 `artifact.snapshot` / `turn.completed` 结果。
+
+正式 Provider live API smoke 同样需要显式授权，不进入默认 `verify:local` 或 `release:readiness`：
+
+```bash
+LIME_DESKTOP_ALLOW_LIVE_PROVIDER=1 \
+LIME_DESKTOP_LIVE_PROVIDER_API_KEY=... \
+LIME_DESKTOP_LIVE_PROVIDER_MODEL=... \
+npm run smoke:live-provider-runtime
+
+LIME_DESKTOP_ALLOW_LIVE_PROVIDER=1 \
+LIME_DESKTOP_LIVE_PROVIDER_API_KEY=... \
+LIME_DESKTOP_LIVE_PROVIDER_MODEL=... \
+npm run release:readiness:live-provider
+```
+
+该入口会启动真实 `lime-desktop-platform` Electron、真实 Lime App Server JSON-RPC sidecar 和 App Server `--backend runtime`，通过 `settings.saveModel -> modelProvider* / modelProviderKey/create` 写入 App Server provider store，再用 `lime.agent` 触发真实 RuntimeBackend 调用上游 LLM API。它只读取 `LIME_DESKTOP_LIVE_PROVIDER_*` 平台专用环境变量，不读取通用 Provider 环境变量；未传 `--allow-live-provider` 或 `LIME_DESKTOP_ALLOW_LIVE_PROVIDER=1` 时会在启动 Electron 前 fail-closed。live API 通过标准要求 runtime event 至少包含 `message.delta`、`turn.completed` 或 `completed`，单纯 `started` 不算通过；可用 `LIME_DESKTOP_LIVE_PROVIDER_TIMEOUT_MS` 调整单步超时，默认 120 秒。

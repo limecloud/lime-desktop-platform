@@ -507,9 +507,11 @@ export interface AgentRuntimeEvent {
   type:
     | 'started'
     | 'message.delta'
+    | 'artifact.snapshot'
     | 'tool.call'
     | 'tool.result'
     | 'action.required'
+    | 'turn.completed'
     | 'needs-setup'
     | 'blocked'
     | 'completed'

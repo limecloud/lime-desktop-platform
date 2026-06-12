@@ -920,20 +920,29 @@ export const platformSettingsStyles = `
 }
 .lime-model-settings {
   display: grid;
-  grid-template-columns: 222px minmax(0, 1fr);
-  gap: 22px;
-  margin-top: 26px;
-  min-height: 500px;
+  grid-template-columns: 320px minmax(0, 1fr);
+  overflow: hidden;
+  min-height: 520px;
+  height: min(580px, calc(100vh - 190px));
+  border: 1px solid #dfe6eb;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(31, 45, 56, 0.05);
 }
 .lime-model-side {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+  overflow: hidden;
   border-right: 1px solid #e4eaee;
-  padding-right: 14px;
+  background: #fbfaf7;
 }
 .lime-model-side-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   color: #7b8791;
+  padding: 20px 20px 12px;
 }
 .lime-model-side-head strong,
 .lime-model-side-head span {
@@ -954,10 +963,22 @@ export const platformSettingsStyles = `
   color: #8a96a0;
   cursor: pointer;
 }
+.lime-model-side-head button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 999px;
+  font-size: 20px;
+  line-height: 1;
+}
 .lime-model-enabled-list {
   display: grid;
+  align-content: start;
   gap: 6px;
-  margin-top: 18px;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 16px 16px;
 }
 .lime-model-empty-state {
   display: grid;
@@ -982,23 +1003,27 @@ export const platformSettingsStyles = `
 }
 .lime-model-provider-row {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
+  grid-template-columns: 16px 24px minmax(0, 1fr) auto;
   align-items: center;
-  min-height: 42px;
-  border: 0;
-  border-radius: 10px;
+  min-height: 58px;
+  border: 1px solid transparent;
+  border-radius: 16px;
   background: transparent;
   color: #3a4650;
   cursor: pointer;
-  padding: 7px 10px;
+  column-gap: 9px;
+  padding: 9px 12px;
   text-align: left;
 }
 .lime-model-provider-row:hover,
 .lime-model-add-button:hover {
-  background: #f2f5f7;
+  border-color: #e1e7eb;
+  background: #ffffff;
 }
 .lime-model-provider-row.active {
-  background: #eef1f3;
+  border-color: #dfe6eb;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(31, 45, 56, 0.06);
 }
 .lime-model-provider-row strong,
 .lime-model-provider-row small {
@@ -1012,10 +1037,11 @@ export const platformSettingsStyles = `
   align-items: center;
   gap: 7px;
   min-width: 0;
+  grid-column: 3 / 4;
   font-size: 13px;
 }
 .lime-model-provider-row small {
-  grid-column: 2 / 4;
+  grid-column: 3 / 5;
   color: #a0a8b1;
   font-size: 11px;
 }
@@ -1034,31 +1060,45 @@ export const platformSettingsStyles = `
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  width: calc(100% - 6px);
-  border-radius: 10px;
-  margin-top: 10px;
-  padding: 8px 10px;
+  width: 100%;
+  border-radius: 16px;
+  padding: 12px 14px;
   text-align: left;
 }
 .lime-model-add-button.active {
-  background: #eef1f3;
+  background: #ffffff;
   color: #3a4650;
+  box-shadow: 0 1px 2px rgba(31, 45, 56, 0.06);
+}
+.lime-model-side-footer {
+  border-top: 1px solid #e4eaee;
+  padding: 14px 16px;
 }
 .lime-model-main {
   display: grid;
-  align-content: start;
-  gap: 16px;
+  grid-template-rows: minmax(0, 1fr) auto;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #ffffff;
 }
 .lime-model-config-card {
   display: grid;
-  gap: 14px;
-  border: 1px solid #e3e8ec;
-  border-radius: 18px;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  min-height: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
   background: #ffffff;
-  padding: 16px;
-  max-width: 528px;
-  box-shadow: 0 1px 2px rgba(31, 45, 56, 0.04);
+  padding: 0;
+  max-width: none;
+  box-shadow: none;
+}
+.lime-model-detail-head {
+  display: grid;
+  gap: 12px;
+  border-bottom: 1px solid #e8edf0;
+  padding: 22px 28px 18px;
 }
 .lime-model-card-title {
   display: flex;
@@ -1077,38 +1117,75 @@ export const platformSettingsStyles = `
 }
 .lime-provider-icon {
   display: inline-grid;
-  width: 16px;
-  height: 16px;
+  width: 24px;
+  height: 24px;
   flex: 0 0 auto;
   place-items: center;
+  border: 1px solid #e1e7eb;
+  border-radius: 8px;
+  background: #ffffff;
   color: #3a4650;
 }
 .lime-provider-icon svg {
   display: block;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
 .lime-model-card-title h2 {
   margin: 0;
-  font-size: 16px;
+  color: #1f2a33;
+  font-size: 20px;
+  font-weight: 700;
 }
 .lime-model-card-title button {
-  border: 0;
-  background: transparent;
+  min-height: 34px;
+  border: 1px solid #dfe6eb;
+  border-radius: 999px;
+  background: #ffffff;
   color: #4d5b66;
+  cursor: pointer;
+  padding: 0 12px;
   font-size: 12px;
 }
 .lime-model-ready-banner {
   border-radius: 10px;
   background: #e8f4ed;
   color: #168246;
-  padding: 11px 14px;
-  font-size: 13px;
+  padding: 10px 12px;
+  font-size: 12px;
   font-weight: 650;
 }
 .lime-model-ready-banner.pending {
   background: #fff6de;
   color: #7b5200;
+}
+.lime-model-guide-notice {
+  border: 1px solid #dbe3e8;
+  border-radius: 12px;
+  background: #f7f9fa;
+  color: #596672;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.lime-model-config-scroll {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 28px;
+}
+.lime-model-config-section {
+  display: grid;
+  gap: 12px;
+  max-width: 760px;
+}
+.lime-model-config-section h3 {
+  margin: 0;
+  color: #2a3640;
+  font-size: 13px;
+  font-weight: 700;
 }
 .lime-model-selector {
   display: grid;
@@ -1180,7 +1257,7 @@ export const platformSettingsStyles = `
 .lime-model-field-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 .lime-model-field {
   display: grid;
@@ -1190,9 +1267,9 @@ export const platformSettingsStyles = `
 }
 .lime-model-field input,
 .lime-model-field select {
-  height: 34px;
+  height: 38px;
   border: 1px solid #e4e9ed;
-  border-radius: 999px;
+  border-radius: 10px;
   background: #ffffff;
   color: #3a4650;
   padding: 0 14px;
@@ -1236,8 +1313,9 @@ export const platformSettingsStyles = `
 .lime-model-priority-box {
   display: grid;
   gap: 8px;
-  border-radius: 18px;
-  background: #f2f3f5;
+  border: 1px solid #e4e9ed;
+  border-radius: 12px;
+  background: #fbfcfd;
   padding: 14px;
 }
 .lime-model-priority-box button {
@@ -1285,10 +1363,10 @@ export const platformSettingsStyles = `
   align-items: center;
 }
 .lime-model-add-priority input {
-  height: 30px;
+  height: 34px;
   min-width: 0;
   border: 1px solid #e0e6ea;
-  border-radius: 999px;
+  border-radius: 9px;
   background: #ffffff;
   color: #3a4650;
   padding: 0 12px;
@@ -1300,6 +1378,8 @@ export const platformSettingsStyles = `
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
+  border-top: 1px solid #e8edf0;
+  padding: 14px 28px;
 }
 .lime-model-test-button,
 .lime-model-save-button,
@@ -1316,21 +1396,54 @@ export const platformSettingsStyles = `
   color: #ffffff;
 }
 .lime-model-intent-link {
-  max-width: 528px;
+  width: fit-content;
+  padding: 0 14px;
 }
 .lime-model-status {
-  max-width: 528px;
-  border: 1px solid #dfe7ec;
-  border-radius: 12px;
-  background: #fbfcfd;
+  min-width: 0;
+  border: 0;
+  background: transparent;
   color: #596672;
-  padding: 10px 12px;
+  padding: 0;
   font-size: 12px;
   line-height: 1.5;
 }
 .lime-model-catalog {
   display: grid;
+  align-content: start;
   gap: 16px;
+  min-height: 0;
+  overflow: auto;
+  padding: 28px;
+}
+.lime-model-empty-panel {
+  display: grid;
+  gap: 8px;
+  max-width: 720px;
+  border: 1px solid #e0e6ea;
+  border-radius: 18px;
+  background: #fbfcfd;
+  padding: 24px;
+  box-shadow: 0 1px 2px rgba(31, 45, 56, 0.04);
+}
+.lime-model-empty-panel strong {
+  color: #1f2a33;
+  font-size: 18px;
+  font-weight: 700;
+}
+.lime-model-empty-panel span {
+  color: #75818b;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.lime-model-detail-footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid #e8edf0;
+  background: #fbfcfd;
+  padding: 12px 28px;
 }
 .lime-model-tabs {
   display: grid;

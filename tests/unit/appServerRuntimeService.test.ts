@@ -281,6 +281,36 @@ test('runtime options projection 映射为 App Server current provider/model 字
   assert.equal(serializedProjection.includes('secret'), false);
 });
 
+test('Product App capabilityId 进入 App Server capability policy，宿主 lime.agent 保留为外层能力', async () => {
+  const service = new AppServerRuntimeService();
+  const result = await service.start(
+    createInvokeInput({
+      runtimeOptions: {
+        capabilityId: 'content.draft.generate',
+        modelId: 'local-default',
+        permissionMode: 'ask',
+        workflowId: 'draft-flow',
+      },
+      modelPolicy: { capability: 'agent', preferredModelId: 'local-default' },
+    }),
+    { modelSettings: createModelSettings() },
+  );
+
+  const projection = createAppServerRuntimeOptionsProjection(result.request, result.runtimeContext);
+  assert.equal(result.request.runtimeOptions?.capabilityId, 'content.draft.generate');
+  assert.equal(projection.capabilityId, 'content.draft.generate');
+  assert.deepEqual(projection.metadata, {
+    workflowId: 'draft-flow',
+    productCapabilityId: 'content.draft.generate',
+    requestedModelId: 'local-default',
+    permissionMode: 'ask',
+  });
+  assert.equal(JSON.stringify(projection).includes('content.draft.generate'), true);
+  assert.equal(JSON.stringify(projection).includes('apiKey'), false);
+  assert.equal(JSON.stringify(projection).includes('token'), false);
+  assert.equal(JSON.stringify(projection).includes('secret'), false);
+});
+
 test('provider 已同步到 App Server 时 runtime providerPreference 使用 App Server provider id', async () => {
   const service = new AppServerRuntimeService(undefined, (provider) => ({
     providerId: provider.id,
