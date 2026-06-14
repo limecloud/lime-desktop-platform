@@ -635,6 +635,92 @@ test('PlatformService 在 App Server provider store 为空时不回退本地 pro
   }
 });
 
+test('PlatformService 刷新 App Server provider projection 时保留未投影的非敏感 provider', async () => {
+  const root = createTempRoot();
+  try {
+    const client: Partial<AppServerJsonRpcClient> = {
+      connected: true,
+      listModelProviders: async () => [
+        {
+          provider: {
+            id: 'content-studio-text-openai',
+            displayName: 'App Server Text',
+            protocol: 'openai-compatible',
+            capabilityKinds: ['text'],
+            enabled: true,
+            apiKeyConfigured: true,
+            authType: 'api-key',
+            baseUrl: 'https://models.example.test/v1',
+            useResponsesApi: true,
+            models: ['gpt-4.1-mini'],
+          },
+          syncRecord: {
+            desktopProviderId: 'content-studio-text-openai',
+            status: 'synced',
+            appServerProviderId: 'content-studio-text-openai',
+            appServerProviderType: 'openai-response',
+            appServerProviderName: 'App Server Text',
+            apiHost: 'https://models.example.test/v1',
+            settingsVersion: '1',
+            syncedAt: '2026-06-09T00:00:00.000Z',
+            credentialSyncedAt: '2026-06-09T00:00:00.000Z',
+            plaintextSecrets: false,
+          },
+        },
+      ],
+    };
+    const offlineService = await createService(root);
+    const current = offlineService.getModelSettings();
+    await offlineService.saveModelSettings({
+      ...current,
+      defaultAgentProviderId: 'content-studio-text-openai',
+      defaultTextModelId: 'saved-text-model',
+      defaultImageModelId: 'saved-image-model',
+      providers: [
+        {
+          id: 'content-studio-text-openai',
+          displayName: 'Content Studio Text',
+          protocol: 'openai-compatible',
+          capabilityKinds: ['text'],
+          enabled: true,
+          apiKeyConfigured: true,
+          authType: 'api-key',
+          baseUrl: 'https://models.example.test/v1',
+          useResponsesApi: true,
+          models: ['saved-text-model'],
+        },
+        {
+          id: 'content-studio-image-openai',
+          displayName: 'Content Studio Image',
+          protocol: 'openai-compatible',
+          capabilityKinds: ['image'],
+          enabled: true,
+          apiKeyConfigured: true,
+          authType: 'api-key',
+          baseUrl: 'https://images.example.test/v1',
+          useResponsesApi: true,
+          models: ['saved-image-model', 'saved-image-backup'],
+        },
+      ],
+    });
+
+    const service = await createServiceWithClient(root, client);
+    const settings = await service.getModelSettingsFresh();
+    const textProvider = settings.providers.find((provider) => provider.id === 'content-studio-text-openai');
+    const imageProvider = settings.providers.find((provider) => provider.id === 'content-studio-image-openai');
+
+    assert.equal(textProvider?.displayName, 'App Server Text');
+    assert.deepEqual(textProvider?.models, ['gpt-4.1-mini']);
+    assert.equal(textProvider?.apiKeyConfigured, true);
+    assert.equal(imageProvider?.displayName, 'Content Studio Image');
+    assert.deepEqual(imageProvider?.models, ['saved-image-model', 'saved-image-backup']);
+    assert.equal(imageProvider?.apiKeyConfigured, false);
+    assert.equal(settings.defaultImageModelId, 'saved-image-model');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('PlatformService 刷新 App Server provider projection 时不为缺失模型的 provider 注入默认模型', async () => {
   const root = createTempRoot();
   try {

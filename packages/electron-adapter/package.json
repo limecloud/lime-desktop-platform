@@ -1,6 +1,6 @@
 {
   "name": "@limecloud/desktop-platform-electron-adapter",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Lime Desktop Platform Electron adapter for Product App embedded hosts.",
   "type": "module",
   "license": "Apache-2.0",

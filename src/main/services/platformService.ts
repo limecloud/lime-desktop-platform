@@ -136,6 +136,20 @@ function resolveProjectedDefaultTextModelId(
   return defaultProvider?.models[0] ?? providers.find((provider) => provider.enabled)?.models[0] ?? providers[0]?.models[0];
 }
 
+function mergeProjectedModelProviders(
+  currentProviders: ModelSettings['providers'],
+  projectedProviders: ModelSettings['providers'],
+): ModelSettings['providers'] {
+  if (!projectedProviders.length) {
+    return [];
+  }
+  const projectedById = new Map(projectedProviders.map((provider) => [provider.id, provider]));
+  return [
+    ...currentProviders.map((provider) => projectedById.get(provider.id) ?? provider),
+    ...projectedProviders.filter((provider) => !currentProviders.some((current) => current.id === provider.id)),
+  ];
+}
+
 function createModelSettingsSnapshot(settings: ModelSettings): ModelSettingsSnapshot {
   return {
     version: settings.version,
@@ -1031,19 +1045,20 @@ export class PlatformService {
           apiKey: undefined,
         };
       });
+      const providers = mergeProjectedModelProviders(currentSettings.providers, projectedProviders);
       const nextSettings: ModelSettings = {
         ...currentSettings,
         updatedAt: nowIso(),
         defaultAgentProviderId: resolveProjectedDefaultProviderId(
           currentSettings.defaultAgentProviderId,
-          projectedProviders,
+          providers,
         ),
         defaultTextModelId: resolveProjectedDefaultTextModelId(
           currentSettings.defaultTextModelId,
           currentSettings.defaultAgentProviderId,
-          projectedProviders,
+          providers,
         ),
-        providers: projectedProviders,
+        providers,
       };
       const nextRecords = { ...records };
       for (const projection of projections) {
