@@ -1,15 +1,15 @@
 {
   "name": "@limecloud/desktop-platform-electron-adapter",
-  "version": "0.2.1",
+  "version": "0.2.4",
   "description": "Lime Desktop Platform Electron adapter for Product App embedded hosts.",
   "type": "module",
   "license": "Apache-2.0",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/packages/electron-adapter/src/index.js",
+  "types": "dist/packages/electron-adapter/src/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "types": "./dist/packages/electron-adapter/src/index.d.ts",
+      "default": "./dist/packages/electron-adapter/src/index.js"
     }
   },
   "files": [

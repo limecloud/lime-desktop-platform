@@ -618,7 +618,9 @@ test('resolveAppServerSidecarLaunchConfig 只在 APP_SERVER_BIN 配置时启用 
   });
 
   assert.equal(config?.command, '/opt/app-server');
-  assert.deepEqual(config?.args, ['--stdio', '--flag', 'two words']);
+  assert.deepEqual(config?.args.slice(0, 3), ['--stdio', '--flag', 'two words']);
+  assert.equal(config?.args[3], '--data-dir');
+  assert.match(config?.args[4] ?? '', /lime-desktop-platform-user-data\/app-server$/);
   assert.equal(config?.cwd, '/workspace');
   assert.equal(config?.source, 'env-bin');
   assert.equal(config?.env.APP_SERVER_BACKEND_MODE, 'external');

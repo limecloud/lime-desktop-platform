@@ -3,23 +3,23 @@ import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { app } from 'electron';
-import { seedCatalog } from './seedCatalog';
-import { AppServerSidecarLifecycle, resolveAppServerSidecarLaunchConfig } from './appServerJsonRpcClient';
-import { AppServerRuntimeService } from './appServerRuntimeService';
+import { seedCatalog } from './seedCatalog.js';
+import { AppServerSidecarLifecycle, resolveAppServerSidecarLaunchConfig } from './appServerJsonRpcClient.js';
+import { AppServerRuntimeService } from './appServerRuntimeService.js';
 import type { AppServerJsonRpcClient } from './appServerJsonRpcClient';
 import type { AppServerRuntimeClientProvider } from './appServerRuntimeService';
-import { createSafeCapabilityEventPayload } from './capabilityEventPayload';
-import { CredentialBroker } from './credentialBroker';
-import { LimecoreControlPlane } from './limecoreControlPlane';
+import { createSafeCapabilityEventPayload } from './capabilityEventPayload.js';
+import { CredentialBroker } from './credentialBroker.js';
+import { getElectronAppPath, getElectronAppVersion, getElectronPath } from './electronApp.js';
+import { LimecoreControlPlane } from './limecoreControlPlane.js';
 import {
   applyModelSettingsCredentials,
   projectModelSettingsCredentialState,
   readModelProviderCredentialState,
-} from './modelSettingsCredentials';
-import { PlatformStore } from './platformStore';
-import { downloadAndVerifyReleaseArtifact } from './releaseDownloader';
-import { RuntimeBridgeServer } from './runtimeBridgeServer';
+} from './modelSettingsCredentials.js';
+import { PlatformStore } from './platformStore.js';
+import { downloadAndVerifyReleaseArtifact } from './releaseDownloader.js';
+import { RuntimeBridgeServer } from './runtimeBridgeServer.js';
 import type {
   AppStorageDeleteResult,
   AppStorageDocument,
@@ -73,7 +73,7 @@ function nowIso(): string {
 function runtimeBridgeDiscoveryPath(): string {
   const overridePath = process.env.LIME_DESKTOP_PLATFORM_BRIDGE_DISCOVERY_PATH?.trim();
   if (overridePath) return overridePath;
-  return join(app.getPath('appData'), 'Lime Desktop Platform', 'runtime-bridge-discovery.json');
+  return join(getElectronPath('appData'), 'Lime Desktop Platform', 'runtime-bridge-discovery.json');
 }
 
 function writeRuntimeBridgeDiscovery(descriptor: RuntimeBridgeDiscoveryDescriptor): void {
@@ -1045,8 +1045,6 @@ export class PlatformService {
         ),
         providers: projectedProviders,
       };
-      this.store.writeModelSettings(applyModelSettingsCredentials(nextSettings, this.credentialBroker));
-
       const nextRecords = { ...records };
       for (const projection of projections) {
         const appServerProviderId = projection.syncRecord.appServerProviderId ?? projection.provider.id;
@@ -1065,6 +1063,7 @@ export class PlatformService {
         };
       }
       this.store.writeModelProviderAppServerSyncRecords(nextRecords);
+      this.store.writeModelSettings(projectModelSettingsCredentialState(nextSettings, this.credentialBroker, nextRecords));
     } catch (error) {
       this.appendEvent({
         level: 'warning',
@@ -1603,7 +1602,7 @@ export class PlatformService {
     const platformSettings = this.getPlatformSettings();
     return {
       hostKind: 'electron',
-      hostVersion: app.getVersion(),
+      hostVersion: getElectronAppVersion(),
       capabilities: [
         'lime.cloudSession',
         'lime.modelSettings',
@@ -1738,7 +1737,7 @@ export class PlatformService {
 
     const projectRoot =
       (referenceRuntime.projectRootEnv ? process.env[referenceRuntime.projectRootEnv] : undefined) ??
-      (referenceRuntime.relativeProjectRoot ? resolve(app.getAppPath(), referenceRuntime.relativeProjectRoot) : undefined);
+      (referenceRuntime.relativeProjectRoot ? resolve(getElectronAppPath(), referenceRuntime.relativeProjectRoot) : undefined);
 
     if (!projectRoot) {
       return undefined;

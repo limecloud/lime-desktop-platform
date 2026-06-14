@@ -5,7 +5,6 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, normalize, relative, sep } from 'node:path';
-import { app as electronApp } from 'electron';
 import type {
   AgentRuntimeContext,
   AgentRuntimeEvent,
@@ -16,8 +15,9 @@ import type {
   ModelProviderAppServerSyncRecord,
   ModelProviderConfig,
 } from '../../shared/types';
-import { createAppServerRuntimeOptionsProjection } from './appServerRuntimeService';
-import { redactSensitiveValue } from './sensitiveRedaction';
+import { createAppServerRuntimeOptionsProjection } from './appServerRuntimeService.js';
+import { getElectronPath } from './electronApp.js';
+import { redactSensitiveValue } from './sensitiveRedaction.js';
 
 const APP_SERVER_RESOURCE_DIR_NAME = 'app-server';
 const APP_SERVER_RESOURCE_MANIFEST = 'manifest.json';
@@ -909,16 +909,7 @@ function resolveDefaultAppServerDataDir(options: AppServerSidecarResolveOptions)
 }
 
 function resolveElectronUserDataPath(): string | undefined {
-  try {
-    if (typeof electronApp?.getPath !== 'function') {
-      return undefined;
-    }
-
-    const userDataPath = electronApp.getPath('userData');
-    return typeof userDataPath === 'string' && userDataPath.trim() ? userDataPath.trim() : undefined;
-  } catch {
-    return undefined;
-  }
+  return getElectronPath('userData');
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

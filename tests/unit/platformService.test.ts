@@ -603,6 +603,7 @@ test('PlatformService 读取模型设置时优先刷新 App Server provider proj
 
     const persistedSettings = readFileSync(join(root, 'userData', 'state', 'model-settings.json'), 'utf8');
     assert.equal(persistedSettings.includes('custom-provider-1'), true);
+    assert.equal(JSON.parse(persistedSettings).providers[0]?.apiKeyConfigured, true);
     assert.equal(persistedSettings.includes('"apiKey"'), false);
     const credentialState = service
       .getDiagnostics()

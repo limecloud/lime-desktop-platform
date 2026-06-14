@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { app } from 'electron';
 import type {
   AppStorageDeleteInput,
   AppStorageDeleteResult,
@@ -26,6 +25,7 @@ import type {
   RuntimeEvent,
   UpdateState,
 } from '../../shared/types';
+import { getElectronPath } from './electronApp.js';
 
 export interface PlatformStorePaths {
   workspaceRoot: string;
@@ -182,12 +182,13 @@ export class PlatformStore {
   private paths: PlatformStorePaths;
 
   constructor() {
-    const userStateDir = join(app.getPath('userData'), 'state');
+    const userDataPath = getElectronPath('userData');
+    const userStateDir = join(userDataPath, 'state');
     mkdirSync(userStateDir, { recursive: true });
 
     const platformSettings = normalizePlatformSettings(readJson<PlatformSettings>(
       join(userStateDir, 'platform-settings.json'),
-      this.createDefaultPlatformSettings(join(app.getPath('userData'), 'workspace')),
+      this.createDefaultPlatformSettings(join(userDataPath, 'workspace')),
     ));
 
     this.paths = this.createPaths(userStateDir, platformSettings.workspacePath);

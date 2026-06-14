@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { app } from 'electron';
 import type { CatalogApp, DesktopAppManifest, PlatformCapability, SourceKind } from '../../shared/types';
+import { getElectronAppPath } from './electronApp.js';
 
 interface DevCatalogMetadata {
   catalogScope?: 'platform-conformance' | 'external-product-reference' | 'docs-only';
@@ -64,7 +64,7 @@ function createCatalogApp(manifest: DesktopAppManifest, metadata: DevCatalogMeta
 }
 
 function loadSampleCatalog(): CatalogApp[] {
-  const samplesRoot = resolve(app.getAppPath(), 'samples');
+  const samplesRoot = resolve(getElectronAppPath(), 'samples');
   if (!existsSync(samplesRoot)) {
     return [];
   }

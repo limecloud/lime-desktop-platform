@@ -1,5 +1,5 @@
 import type { CapabilityInvokeInput } from '../../shared/types';
-import { redactSensitiveValue } from './sensitiveRedaction';
+import { redactSensitiveValue } from './sensitiveRedaction.js';
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -69,4 +69,3 @@ export function createSafeCapabilityEventPayload(input: CapabilityInvokeInput): 
     input: redactSensitiveValue(input.input),
   };
 }
-

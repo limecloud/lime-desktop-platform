@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { PlatformService } from '../../../src/main/services/platformService';
+import { PlatformService } from '../../../src/main/services/platformService.js';
 import type {
   CapabilityInvokeInput,
   CapabilityInvokeResult,
